@@ -71,13 +71,23 @@ Grab the latest `RockyCompanion-<version>-mac.dmg` from the
 into **Applications** (replace the old copy when updating — your settings and
 Rocky's memory live in your user folder and survive).
 
-**First open only:** the app is not code-signed yet, so macOS will warn you.
-Right-click the app → **Open** → **Open**. If macOS says the app is "damaged",
-run this once in Terminal instead:
+**First open:** the app is not code-signed yet, so **macOS will refuse to open
+it** — typically with a "damaged" or "cannot be opened" warning. Run this once
+in Terminal, then open the app normally:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Rocky Companion.app"
 ```
+
+(Right-click → **Open** → **Open** sometimes works instead, but on recent
+macOS versions the `xattr` command above is usually required.)
+
+**After updating:** because the build is unsigned, macOS treats each new
+version as a brand-new app. You may need to run the `xattr` command again, and
+**re-grant Screen Recording** (System Settings → Privacy & Security → Screen
+Recording — toggle Rocky Companion **off and back on**, then relaunch). If the
+toggle already looks ON but Rocky still reports the permission as denied, that
+stale toggle belongs to the previous copy — flipping it off/on fixes it.
 
 Rocky checks the Releases page about once a day and offers new versions in a
 speech bubble (you can turn this off in Settings — it is the app's only
@@ -188,7 +198,11 @@ To capture the screen at all, macOS requires the **Screen Recording** permission
 2. Enable **Rocky Companion** (in development, this may appear as **Electron** or
    your terminal app).
 3. **Relaunch** the app after granting — macOS only applies the change on a fresh
-   launch.
+   launch (Settings → Screen recording has a **Relaunch Rocky** button).
+4. **If the toggle is already ON but Rocky still says denied:** the grant
+   belongs to an older copy of the app (unsigned builds look like a new app to
+   macOS after every update). Toggle it **off and back on**, then relaunch. As a
+   last resort, run `tccutil reset ScreenCapture` in Terminal and grant again.
 
 Without this permission, captures come back **blank/black**, and Rocky will tell
 you his eyes are cloudy rather than pretend he can see. Rocky surfaces the

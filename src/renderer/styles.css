@@ -23,7 +23,9 @@ body.companion {
   position: absolute;
   top: 8px;
   left: 50%;
-  width: 250px;
+  /* The window is small and fixed-size; never exceed it or text clips. */
+  width: calc(100vw - 12px);
+  max-width: 250px;
   box-sizing: border-box;
   padding: 9px 11px 11px;
   transform: translate(-50%, -6px) scale(0.98);
@@ -155,14 +157,15 @@ body.companion {
   width: 22px;
   height: 22px;
   padding: 0;
-  border: 1px solid rgba(184, 158, 110, 0.4);
+  border: 1px solid rgba(0, 0, 0, 0.25);
   border-radius: 50%;
-  background: rgba(21, 24, 24, 0.72);
-  color: #b8a77e;
+  background: rgba(255, 255, 255, 0.92);
+  color: #2b2f2d;
   font-size: 9px;
   line-height: 1;
   cursor: pointer;
-  opacity: 0.25;
+  opacity: 0.85;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
   transition: opacity 140ms ease, transform 140ms ease;
   -webkit-app-region: no-drag;
 }
@@ -170,6 +173,7 @@ body.companion {
 #control-toggle:hover,
 #control-toggle.open {
   opacity: 1;
+  background: #ffffff;
   transform: translateX(-50%) scale(1.08);
 }
 

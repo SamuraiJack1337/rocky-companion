@@ -55,6 +55,7 @@ const api: RockyAPI = {
   checkScreenPermission: () =>
     ipcRenderer.invoke(CH.SCREEN_PERMISSION_CHECK) as Promise<ScreenPermissionStatus>,
   openScreenSettings: () => ipcRenderer.invoke(CH.SCREEN_PERMISSION_OPEN) as Promise<void>,
+  relaunchApp: () => ipcRenderer.invoke(CH.RELAUNCH) as Promise<void>,
 
   // consent + lifecycle
   submitConsent: (payload: ConsentPayload) =>

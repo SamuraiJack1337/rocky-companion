@@ -5,7 +5,7 @@
 // Secrets never cross into the renderer: the OpenAI key is validated and stored
 // here and never returned to any window.
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { app, ipcMain, BrowserWindow } from 'electron';
 import { CH } from '../shared/ipc';
 import type { ConsentPayload } from '../shared/ipc';
 import type { EngineeringRequest, RockyReply, Settings } from '../shared/types';
@@ -83,6 +83,12 @@ export function registerIpc(deps: IpcDeps): void {
   );
   ipcMain.handle(CH.SCREEN_PERMISSION_CHECK, () => getScreenPermission());
   ipcMain.handle(CH.SCREEN_PERMISSION_OPEN, () => openScreenSettings());
+  // macOS applies a Screen Recording grant only to a fresh launch, so the
+  // settings window offers a one-click relaunch after the user flips the toggle.
+  ipcMain.handle(CH.RELAUNCH, () => {
+    app.relaunch();
+    app.exit(0);
+  });
 
   // ── consent + lifecycle ──────────────────────────────────────────────────
   ipcMain.handle(CH.CONSENT_SUBMIT, (_e, payload: ConsentPayload) => {

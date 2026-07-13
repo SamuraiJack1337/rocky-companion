@@ -38,6 +38,7 @@ export const CH = {
   OLLAMA_CHECK: 'provider:check-ollama',
   SCREEN_PERMISSION_CHECK: 'permission:check-screen',
   SCREEN_PERMISSION_OPEN: 'permission:open-screen',
+  RELAUNCH: 'app:relaunch',
   // consent + lifecycle
   CONSENT_SUBMIT: 'consent:submit',
   LOOK_NOW: 'rocky:look-now',
@@ -134,6 +135,7 @@ export interface RockyAPI {
   checkOllama(host: string, model: string): Promise<OllamaStatus>;
   checkScreenPermission(): Promise<ScreenPermissionStatus>;
   openScreenSettings(): Promise<void>;
+  relaunchApp(): Promise<void>;
 
   // ── consent + lifecycle ──────────────────────────────────────────────────
   submitConsent(payload: ConsentPayload): Promise<Settings>;

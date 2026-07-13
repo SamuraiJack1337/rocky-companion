@@ -582,13 +582,19 @@
         <div class="inline" style="margin-top: 8px">
           <button id="open-screen-settings" class="hidden">Open System Settings</button>
           <button id="recheck-screen">Re-check</button>
+          <button id="relaunch-app" class="hidden">Relaunch Rocky</button>
         </div>
         <div class="hint hidden" id="screen-hint">
           Rocky cannot see your screen until macOS grants Screen Recording. When running from
           source, the app appears as <strong>Electron</strong> in that list (the permission
-          belongs to the binary, not the name). Enable it, then relaunch Rocky — macOS only
-          applies the grant to a fresh launch. If the toggle looks stuck from an earlier
-          denial, run <code>tccutil reset ScreenCapture</code> in Terminal and try again.
+          belongs to the binary, not the name). Enable it, then use <strong>Relaunch
+          Rocky</strong> — macOS only applies the grant to a fresh launch.
+          <br /><br />
+          <strong>Toggle already ON but Rocky still says denied?</strong> The grant likely
+          belongs to an older copy of the app (each update of the unsigned build looks like a
+          new app to macOS). Turn the toggle <strong>off and back on</strong> for Rocky
+          Companion, approve the prompt, then relaunch. If it is still stuck, run
+          <code>tccutil reset ScreenCapture</code> in Terminal, launch Rocky, and grant again.
         </div>
       </div>
     </section>

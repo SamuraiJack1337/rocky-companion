@@ -100,6 +100,7 @@ const skinStatus = el<HTMLDivElement>('skin-status');
 const screenStatus = el<HTMLDivElement>('screen-status');
 const openScreenBtn = el<HTMLButtonElement>('open-screen-settings');
 const recheckScreenBtn = el<HTMLButtonElement>('recheck-screen');
+const relaunchBtn = el<HTMLButtonElement>('relaunch-app');
 const screenHint = el<HTMLDivElement>('screen-hint');
 
 const saveBtn = el<HTMLButtonElement>('save-btn');
@@ -267,6 +268,7 @@ function paintScreenPermission(status: ScreenPermissionStatus): void {
   if (granted) {
     setStatus(screenStatus, 'Granted — Rocky can see your screen.', 'ok');
     openScreenBtn.classList.add('hidden');
+    relaunchBtn.classList.add('hidden');
     screenHint.classList.add('hidden');
     return;
   }
@@ -279,6 +281,7 @@ function paintScreenPermission(status: ScreenPermissionStatus): void {
   };
   setStatus(screenStatus, label[status], status === 'denied' ? 'err' : 'warn');
   openScreenBtn.classList.remove('hidden');
+  relaunchBtn.classList.remove('hidden');
   screenHint.classList.remove('hidden');
 }
 
@@ -436,6 +439,7 @@ openScreenBtn.addEventListener('click', () => {
   );
 });
 recheckScreenBtn.addEventListener('click', () => void refreshScreenPermission());
+relaunchBtn.addEventListener('click', () => void window.rocky.relaunchApp());
 
 // Creature skin: open the folder to drop art in, and re-scan for new skins.
 openSkinsFolderBtn.addEventListener('click', () => {
