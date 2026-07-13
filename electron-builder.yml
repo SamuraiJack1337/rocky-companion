@@ -11,6 +11,9 @@ directories:
   output: release
   buildResources: build
 
+# Ad-hoc sign the packed .app (see the hook for why TCC needs this).
+afterPack: ./scripts/adhoc-sign.cjs
+
 files:
   - dist/**/*
   - package.json
@@ -19,8 +22,10 @@ files:
 mac:
   category: public.app-category.utilities
   icon: build/icon.icns
-  # Deliberately unsigned: no Developer ID yet. Users bypass Gatekeeper once
-  # (right-click → Open); release notes and the README carry the instructions.
+  # No Developer ID yet: identity null stops electron-builder from looking for
+  # a certificate; the afterPack hook above applies an ad-hoc signature instead
+  # so macOS TCC can attach Screen Recording grants to the bundle. Users still
+  # bypass Gatekeeper once per install (xattr / right-click → Open).
   identity: null
   # One DMG that runs on both Apple Silicon and Intel Macs.
   target:

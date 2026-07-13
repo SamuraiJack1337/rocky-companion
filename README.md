@@ -82,12 +82,20 @@ xattr -dr com.apple.quarantine "/Applications/Rocky Companion.app"
 (Right-click → **Open** → **Open** sometimes works instead, but on recent
 macOS versions the `xattr` command above is usually required.)
 
-**After updating:** because the build is unsigned, macOS treats each new
-version as a brand-new app. You may need to run the `xattr` command again, and
-**re-grant Screen Recording** (System Settings → Privacy & Security → Screen
-Recording — toggle Rocky Companion **off and back on**, then relaunch). If the
-toggle already looks ON but Rocky still reports the permission as denied, that
-stale toggle belongs to the previous copy — flipping it off/on fixes it.
+**After updating:** the app is ad-hoc signed (no Developer ID yet), and ad-hoc
+signatures differ per build, so macOS treats each new version as a brand-new
+app. Expect up to three one-time prompts after an update:
+
+1. Run the `xattr` command again if macOS refuses to open the app.
+2. **Re-grant Screen Recording** (System Settings → Privacy & Security → Screen
+   Recording — toggle Rocky Companion **off and back on**, then relaunch). If
+   the toggle already looks ON but Rocky still reports denied, that stale
+   toggle belongs to the previous copy — flipping it off/on fixes it.
+3. A keychain prompt — *"Rocky Companion wants to access key 'rocky-companion
+   Safe Storage'"* — appears because the new build's signature no longer
+   matches the one that created the item. Enter your Mac login password and
+   click **Always Allow**; this is the app reading its own encryption key for
+   your stored API key. Nothing leaves your machine.
 
 Rocky checks the Releases page about once a day and offers new versions in a
 speech bubble (you can turn this off in Settings — it is the app's only

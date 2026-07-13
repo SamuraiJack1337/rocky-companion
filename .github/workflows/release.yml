@@ -56,7 +56,15 @@ jobs:
             1. Download the `.dmg` below and open it.
             2. Drag **Rocky Companion** into **Applications** (replace the old
                one if asked — settings and memory live elsewhere and survive).
-            3. First open only: the app is not code-signed, so macOS will warn
-               you. **Right-click the app → Open → Open**, or run:
+            3. The app has no Developer ID yet, so macOS will refuse to open
+               it. Run this once in Terminal, then open normally:
                `xattr -dr com.apple.quarantine "/Applications/Rocky Companion.app"`
-            4. Grant Screen Recording permission when Rocky asks for his senses.
+               (Right-click → Open → Open sometimes works instead.)
+            4. Grant Screen Recording permission when Rocky asks for his senses,
+               then relaunch Rocky (macOS applies the grant on a fresh launch).
+
+            **Updating from a previous version?** Each build looks like a new
+            app to macOS, so expect three one-time prompts: run `xattr` again,
+            re-grant Screen Recording (toggle it **off and back on**, then
+            relaunch), and click **Always Allow** on the keychain prompt so
+            Rocky can read its own encrypted settings.
