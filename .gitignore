@@ -1,0 +1,43 @@
+# ---------------------------------------------------------------------------
+# Secrets — NEVER commit these. Rocky Companion ships with NO API key, ever.
+# Each user supplies their own key at runtime (settings/keychain) or via a
+# local .env copied from .env.example. Any key that reaches git is COMPROMISED.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+secrets.json
+**/secrets/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+release/
+# Local art experiments / generated sample-skin output — never published.
+output/
+samples/skins/sample-creature/
+# build/ holds electron-builder resources; generated intermediates are ignored
+# but the committed app icon ships with the repo.
+build/*
+!build/icon.icns
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The companion window is small and fixed-size; lock the viewport to it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Renderer talks to main only via the preload bridge; no remote content. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'"
+    />
+    <title>Rocky</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="companion">
+    <!-- The creature: procedurally drawn and dragged to move the window. -->
+    <canvas id="rocky-canvas"></canvas>
+
+    <!-- Grace-style improvised translator: Rocky speaks music; this decodes it. -->
+    <div id="speech-bubble" class="translator" aria-live="polite">
+      <div class="translator-head">
+        <span class="translator-label">ERIDIAN TRANSLATION</span>
+        <span id="translator-activity">SIGNAL</span>
+      </div>
+      <div class="signal-bars" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <p id="bubble-text"></p>
+      <div id="bubble-actions" hidden></div>
+    </div>
+
+    <!-- Quick controls: a small dot below Rocky opens the everyday actions. -->
+    <button id="control-toggle" type="button" aria-label="Rocky controls" aria-haspopup="true">●</button>
+    <div id="control-popover" role="menu" aria-label="Rocky quick controls" hidden>
+      <button id="ctl-look" type="button" role="menuitem">Look now</button>
+      <button id="ctl-focus" type="button" role="menuitem">Focus 25 min</button>
+      <button id="ctl-bump" type="button" role="menuitem">Fist bump</button>
+      <button id="ctl-mute" type="button" role="menuitem">Mute voice</button>
+      <button id="ctl-settings" type="button" role="menuitem">Settings…</button>
+      <button id="ctl-lab" type="button" role="menuitem">Rocky Lab…</button>
+    </div>
+
+    <script src="companion.js"></script>
+  </body>
+</html>

@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rocky Lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101412;
+        --panel: #181e1b;
+        --panel-2: #202823;
+        --border: #344139;
+        --text: #e9eee9;
+        --muted: #99a69e;
+        --green: #84d6a1;
+        --green-deep: #254d35;
+        --gold: #e5c66e;
+        --danger: #ef8e84;
+        --radius: 12px;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(132, 214, 161, 0.08), transparent 34%),
+          var(--bg);
+        color: var(--text);
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        padding: 18px 18px 72px;
+      }
+
+      header { margin: 0 0 16px; }
+      h1 { font-size: 19px; line-height: 1.2; margin: 0 0 4px; letter-spacing: 0.01em; }
+      .subtitle { color: var(--muted); margin: 0; font-size: 12px; }
+      .section {
+        background: rgba(24, 30, 27, 0.96);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 15px;
+        margin-bottom: 13px;
+        box-shadow: 0 8px 26px rgba(0, 0, 0, 0.14);
+      }
+      .section-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      h2 {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        margin: 0;
+        text-transform: uppercase;
+      }
+      .section-note { color: var(--muted); font-size: 11px; }
+      label { color: var(--muted); display: block; font-size: 11.5px; margin-bottom: 5px; }
+      input, select, button { font: inherit; }
+      input, select {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        min-width: 0;
+        outline: none;
+        padding: 8px 9px;
+        width: 100%;
+      }
+      input:focus, select:focus { border-color: var(--green); }
+      button {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        cursor: pointer;
+        padding: 8px 12px;
+        white-space: nowrap;
+      }
+      button:hover:not(:disabled) { border-color: var(--green); }
+      button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+      button:disabled { cursor: default; opacity: 0.45; }
+      button.primary { background: var(--green-deep); border-color: var(--green); font-weight: 650; }
+      button.danger { color: var(--danger); }
+      .row { display: flex; align-items: end; gap: 8px; }
+      .grow { flex: 1; min-width: 0; }
+      .status { color: var(--muted); font-size: 11.5px; min-height: 17px; margin-top: 8px; }
+      .status.ok { color: var(--green); }
+      .status.err { color: var(--danger); }
+
+      .focus-panel {
+        align-items: center;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        display: flex;
+        gap: 16px;
+        justify-content: space-between;
+        margin-bottom: 11px;
+        padding: 11px 13px;
+      }
+      .focus-panel.active { border-color: rgba(132, 214, 161, 0.72); }
+      .timer {
+        font-size: 29px;
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        letter-spacing: 0.025em;
+        line-height: 1;
+      }
+      .timer-label { color: var(--muted); font-size: 11px; margin-top: 5px; }
+      .focus-copy { color: var(--muted); max-width: 220px; text-align: right; }
+      .presets { display: grid; gap: 7px; grid-template-columns: repeat(4, 1fr); margin-bottom: 9px; }
+      .presets button { padding-left: 6px; padding-right: 6px; }
+
+      .buddy-row {
+        align-items: center;
+        display: flex;
+        gap: 12px;
+      }
+      .buddy-copy { color: var(--muted); flex: 1; }
+      #fist-bump { font-size: 14px; min-width: 120px; }
+
+      .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+      .tab[aria-selected="true"] { background: var(--green-deep); border-color: var(--green); }
+      .tool-panel[hidden] { display: none; }
+      .expression-row { display: flex; gap: 8px; }
+      #calc-expression { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .result {
+        background: #101512;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--green);
+        font: 600 16px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+        margin-top: 9px;
+        min-height: 42px;
+        overflow-wrap: anywhere;
+        padding: 10px;
+      }
+      .result.error { color: var(--danger); }
+      .formula-hint { color: var(--muted); font-size: 11px; margin-top: 7px; }
+      .converter { display: grid; gap: 8px; grid-template-columns: 1fr 1.1fr auto 1.1fr; align-items: end; }
+      #swap-units { font-size: 16px; padding: 7px 10px; }
+
+      .relationship-head { align-items: center; display: flex; gap: 12px; margin-bottom: 12px; }
+      .stage-badge {
+        background: var(--green-deep);
+        border: 1px solid var(--green);
+        border-radius: 999px;
+        color: #dff7e7;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 5px 10px;
+        text-transform: capitalize;
+      }
+      .relationship-since { color: var(--muted); flex: 1; font-size: 11.5px; text-align: right; }
+      .progress-track { background: #101512; border-radius: 999px; height: 5px; overflow: hidden; }
+      .progress-fill { background: linear-gradient(90deg, var(--green), var(--gold)); height: 100%; width: 0; }
+      .progress-label { color: var(--muted); font-size: 10.5px; margin: 5px 0 11px; }
+      .stats { display: grid; gap: 7px; grid-template-columns: repeat(5, 1fr); }
+      .stat { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 4px; text-align: center; }
+      .stat strong { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+      .stat span { color: var(--muted); display: block; font-size: 9.5px; line-height: 1.2; margin-top: 2px; }
+      .memory-actions { align-items: center; display: flex; gap: 10px; margin-top: 11px; }
+      .privacy-copy { color: var(--muted); flex: 1; font-size: 10.5px; }
+
+      footer {
+        align-items: center;
+        background: rgba(16, 20, 18, 0.93);
+        border-top: 1px solid var(--border);
+        bottom: 0;
+        display: flex;
+        justify-content: space-between;
+        left: 0;
+        padding: 11px 18px;
+        position: fixed;
+        right: 0;
+        backdrop-filter: blur(9px);
+      }
+      footer span { color: var(--muted); font-size: 11px; }
+
+      @media (max-width: 520px) {
+        .converter { grid-template-columns: 1fr 1fr; }
+        #swap-units { display: none; }
+        .stats { grid-template-columns: repeat(3, 1fr); }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Rocky Lab</h1>
+      <p class="subtitle">Work together. Solve small engineering problems. Build trust.</p>
+    </header>
+
+    <main>
+      <section class="section" aria-labelledby="focus-title">
+        <div class="section-head">
+          <h2 id="focus-title">Work with me</h2>
+          <span class="section-note">Scheduled observations pause while you focus</span>
+        </div>
+        <div class="focus-panel" id="focus-panel">
+          <div>
+            <div class="timer" id="focus-countdown" aria-live="off">25:00</div>
+            <div class="timer-label" id="focus-label">Choose a session</div>
+          </div>
+          <div class="focus-copy" id="focus-copy">Rocky keeps watch while you work.</div>
+        </div>
+        <div class="presets" id="focus-presets">
+          <button type="button" data-minutes="15">15 min</button>
+          <button type="button" data-minutes="25">25 min</button>
+          <button type="button" data-minutes="50">50 min</button>
+          <button type="button" data-minutes="90">90 min</button>
+        </div>
+        <div class="row">
+          <div class="grow">
+            <label for="focus-minutes">Custom duration (1–180 minutes)</label>
+            <input id="focus-minutes" type="number" min="1" max="180" step="1" value="25" />
+          </div>
+          <button type="button" class="primary" id="start-focus">Start focus</button>
+          <button type="button" class="danger" id="cancel-focus" disabled>Cancel</button>
+        </div>
+        <div class="status" id="focus-status" aria-live="polite"></div>
+      </section>
+
+      <section class="section" aria-labelledby="buddy-title">
+        <div class="section-head"><h2 id="buddy-title">Buddy signal</h2></div>
+        <div class="buddy-row">
+          <div class="buddy-copy">Finished something difficult? Rocky understands one universal gesture.</div>
+          <button type="button" class="primary" id="fist-bump">Fist bump</button>
+        </div>
+        <div class="status" id="fist-bump-status" aria-live="polite"></div>
+      </section>
+
+      <section class="section" aria-labelledby="engineering-title">
+        <div class="section-head">
+          <h2 id="engineering-title">Engineering bench</h2>
+          <span class="section-note">Calculated locally</span>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Engineering tools">
+          <button class="tab" id="calc-tab" role="tab" aria-selected="true" aria-controls="calc-panel">Calculator</button>
+          <button class="tab" id="convert-tab" role="tab" aria-selected="false" aria-controls="convert-panel">Unit converter</button>
+        </div>
+
+        <div class="tool-panel" id="calc-panel" role="tabpanel" aria-labelledby="calc-tab">
+          <label for="calc-expression">Expression</label>
+          <div class="expression-row">
+            <input id="calc-expression" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="(2 * pi * 6.371e6) / 3600" />
+            <button type="button" class="primary" id="calculate">Solve</button>
+          </div>
+          <div class="formula-hint">Supports +, -, *, /, %, powers (^), parentheses, pi and e. Expressions are parsed—never executed.</div>
+          <div class="result" id="calc-result" aria-live="polite">Ready.</div>
+        </div>
+
+        <div class="tool-panel" id="convert-panel" role="tabpanel" aria-labelledby="convert-tab" hidden>
+          <div class="converter">
+            <div>
+              <label for="convert-value">Value</label>
+              <input id="convert-value" type="number" step="any" value="1" />
+            </div>
+            <div>
+              <label for="convert-from">From</label>
+              <select id="convert-from"></select>
+            </div>
+            <button type="button" id="swap-units" title="Swap units" aria-label="Swap units">⇄</button>
+            <div>
+              <label for="convert-to">To</label>
+              <select id="convert-to"></select>
+            </div>
+          </div>
+          <button type="button" class="primary" id="convert" style="margin-top: 9px">Convert</button>
+          <div class="result" id="convert-result" aria-live="polite">Ready.</div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="relationship-title">
+        <div class="section-head"><h2 id="relationship-title">Our partnership</h2></div>
+        <div class="relationship-head">
+          <span class="stage-badge" id="relationship-stage">First contact</span>
+          <span class="relationship-since" id="relationship-since">Loading shared history…</span>
+        </div>
+        <div class="progress-track" role="progressbar" aria-label="Relationship progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="relationship-progress">
+          <div class="progress-fill" id="relationship-progress-fill"></div>
+        </div>
+        <div class="progress-label" id="relationship-progress-label"></div>
+        <div class="stats">
+          <div class="stat"><strong id="stat-launches">—</strong><span>launches</span></div>
+          <div class="stat"><strong id="stat-observations">—</strong><span>observations</span></div>
+          <div class="stat"><strong id="stat-focus">—</strong><span>focus wins</span></div>
+          <div class="stat"><strong id="stat-bumps">—</strong><span>fist bumps</span></div>
+          <div class="stat"><strong id="stat-solves">—</strong><span>solves</span></div>
+        </div>
+        <div class="memory-actions">
+          <span class="privacy-copy">Only these counters and timestamps are stored—never screenshots, app names, titles, or document text.</span>
+          <button type="button" class="danger" id="reset-memory">Reset history</button>
+        </div>
+        <div class="status" id="memory-status" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Science together. Good.</span>
+      <button type="button" id="close-lab">Close</button>
+    </footer>
+    <script src="lab.js"></script>
+  </body>
+</html>

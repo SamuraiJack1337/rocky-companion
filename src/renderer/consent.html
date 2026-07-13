@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Inline styles are used here, so style-src allows 'unsafe-inline'; no remote content. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'"
+    />
+    <title>Welcome to Rocky</title>
+
+    <!--
+      Self-contained, warm/calm styling for the first-run consent window.
+      This window deliberately does NOT use the shared styles.css: it is a
+      one-time, standalone surface and keeping its look inline means it can
+      never visually drift from the rest of the app or depend on load order.
+      Only the consent.js bundle is external (per build config).
+    -->
+    <style>
+      :root {
+        /* A soft, twilight palette — calm, friendly, not clinical. */
+        --bg-top: #f3efe8;
+        --bg-bottom: #e9e3d8;
+        --card: #fffdf9;
+        --ink: #3a352e;
+        --ink-soft: #6f6859;
+        --accent: #6b8f71; /* mossy green — Rocky's color */
+        --accent-strong: #527a59;
+        --accent-tint: #eef3ec;
+        --warn: #b06a3c;
+        --warn-tint: #fbf0e6;
+        --ok: #527a59;
+        --line: #e4ddd0;
+        --radius: 14px;
+        --shadow: 0 10px 30px rgba(58, 53, 46, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: var(--ink);
+        background: linear-gradient(160deg, var(--bg-top), var(--bg-bottom));
+        /* The card scrolls if content is taller than the window. */
+        overflow-y: auto;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .wrap {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 32px 28px 40px;
+      }
+
+      .card {
+        background: var(--card);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 28px 28px 24px;
+      }
+
+      .hero {
+        text-align: center;
+        margin-bottom: 18px;
+      }
+
+      .hero h1 {
+        font-size: 26px;
+        margin: 6px 0 4px;
+        letter-spacing: -0.01em;
+      }
+
+      .hero p {
+        color: var(--ink-soft);
+        margin: 0;
+        font-size: 15px;
+      }
+
+      /* Rocky avatar — a gentle, original little glyph (no external asset). */
+      .avatar {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 4px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #87ad8c, var(--accent));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: inset 0 -4px 10px rgba(0, 0, 0, 0.12);
+      }
+      .avatar .eyes {
+        display: flex;
+        gap: 9px;
+      }
+      .avatar .eye {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: #2f2a24;
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9);
+      }
+
+      section {
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+        margin-top: 18px;
+      }
+
+      h2 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+
+      p,
+      li {
+        font-size: 14px;
+        color: var(--ink);
+      }
+
+      .muted {
+        color: var(--ink-soft);
+      }
+
+      ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+
+      ul li {
+        margin-bottom: 4px;
+      }
+
+      .pledge {
+        background: var(--accent-tint);
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-top: 14px;
+        font-size: 13.5px;
+        color: var(--accent-strong);
+      }
+      .pledge strong {
+        color: var(--accent-strong);
+      }
+
+      /* Checkbox rows — large, comfortable hit targets. */
+      .check {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 14px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .check:hover {
+        border-color: var(--accent);
+      }
+      .check input {
+        margin-top: 2px;
+        width: 17px;
+        height: 17px;
+        accent-color: var(--accent);
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+      .check .label {
+        font-size: 14px;
+      }
+      .check .sub {
+        display: block;
+        font-size: 12.5px;
+        color: var(--ink-soft);
+        margin-top: 2px;
+      }
+
+      /* Provider option cards (radio group). */
+      .options {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 6px;
+      }
+      .option {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+        border: 1.5px solid var(--line);
+        border-radius: 10px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .option:hover {
+        border-color: var(--accent);
+      }
+      .option.selected {
+        border-color: var(--accent);
+        background: var(--accent-tint);
+      }
+      .option input {
+        margin-top: 2px;
+        width: 17px;
+        height: 17px;
+        accent-color: var(--accent);
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+      .option .title {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .option .badge {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 1px 7px;
+        border-radius: 999px;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
+      .badge.private {
+        background: var(--accent-tint);
+        color: var(--accent-strong);
+      }
+      .badge.cloud {
+        background: var(--warn-tint);
+        color: var(--warn);
+      }
+      .option .desc {
+        font-size: 12.5px;
+        color: var(--ink-soft);
+        margin-top: 3px;
+      }
+
+      /* Provider detail panels (shown for the selected provider). */
+      .panel {
+        margin-top: 10px;
+        padding: 14px;
+        border-radius: 10px;
+        background: #faf8f3;
+        border: 1px solid var(--line);
+      }
+      .panel[hidden] {
+        display: none;
+      }
+      .panel h3 {
+        font-size: 13.5px;
+        margin: 0 0 6px;
+      }
+
+      label.field {
+        display: block;
+        font-size: 13px;
+        color: var(--ink-soft);
+        margin-top: 10px;
+      }
+      input[type='text'],
+      input[type='password'] {
+        width: 100%;
+        margin-top: 4px;
+        padding: 9px 11px;
+        font-size: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--ink);
+        font-family: inherit;
+      }
+      input[type='text']:focus,
+      input[type='password']:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-tint);
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+
+      /* Buttons. */
+      button {
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        border-radius: 9px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        padding: 9px 16px;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.secondary {
+        background: #fff;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        width: 100%;
+        padding: 12px 16px;
+        font-size: 15px;
+        margin-top: 22px;
+      }
+      button.primary:hover:not(:disabled) {
+        background: var(--accent-strong);
+        border-color: var(--accent-strong);
+      }
+
+      /* Inline status text (Ollama check, key validation). */
+      .status {
+        font-size: 13px;
+        margin-top: 10px;
+        min-height: 18px;
+      }
+      .status.ok {
+        color: var(--ok);
+      }
+      .status.warn {
+        color: var(--warn);
+      }
+      .status.muted {
+        color: var(--ink-soft);
+      }
+      .status code {
+        background: #efeae0;
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 12.5px;
+      }
+
+      .spin {
+        display: inline-block;
+        animation: pulse 1.1s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 0.4;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      .foot {
+        text-align: center;
+        margin-top: 14px;
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <!-- Friendly welcome header. -->
+        <div class="hero">
+          <div class="avatar" aria-hidden="true">
+            <div class="eyes">
+              <span class="eye"></span>
+              <span class="eye"></span>
+            </div>
+          </div>
+          <h1>Hello, buddy.</h1>
+          <p>Rocky is a gentle desktop friend. First, a little honesty.</p>
+        </div>
+
+        <!-- 1. Plain-language explanation + understand checkbox. -->
+        <section>
+          <h2>How Rocky sees your world</h2>
+          <p class="muted">
+            So Rocky can react to what you are up to, Rocky takes a quiet look at
+            your screen from time to time — about
+            <strong>every 15 minutes</strong> by default (you can change this, or
+            pause it, anytime).
+          </p>
+          <ul>
+            <li>Rocky only understands your activity at a <strong>high level</strong>
+              (coding, writing, watching a video, taking a break).</li>
+            <li>Rocky never reads or repeats specific text, names, or anything that
+              looks private.</li>
+            <li><strong>No images are ever saved.</strong> Each screenshot lives in
+              memory for a moment, then is gone.</li>
+            <li>You can pause Rocky or quit at any time from the menu bar.</li>
+          </ul>
+
+          <div class="pledge">
+            <strong>Rocky's pledge:</strong> screenshots are never written to disk,
+            and your API key is never logged.
+          </div>
+
+          <label class="check" for="understand">
+            <input type="checkbox" id="understand" />
+            <span class="label">
+              I understand, enable Rocky
+              <span class="sub">Rocky may periodically capture my screen to react in character.</span>
+            </span>
+          </label>
+        </section>
+
+        <!-- 2. Provider choice. -->
+        <section>
+          <h2>Who looks at the screen</h2>
+          <p class="muted">
+            Choose where the high-level analysis happens. Local keeps everything on
+            your device.
+          </p>
+
+          <div class="options" id="provider-options">
+            <!-- Local (Ollama) — default + recommended for privacy. -->
+            <label class="option" for="provider-local" id="option-local">
+              <input type="radio" name="provider" id="provider-local" value="local" checked />
+              <span>
+                <span class="title">On my device
+                  <span class="badge private">private — stays on your device</span>
+                </span>
+                <span class="desc">
+                  Uses a local model via Ollama. Screenshots never leave your Mac.
+                  Recommended.
+                </span>
+              </span>
+            </label>
+
+            <!-- Cloud (OpenAI) — requires explicit opt-in. -->
+            <label class="option" for="provider-cloud" id="option-cloud">
+              <input type="radio" name="provider" id="provider-cloud" value="cloud" />
+              <span>
+                <span class="title">OpenAI (cloud)
+                  <span class="badge cloud">sends screenshots to OpenAI</span>
+                </span>
+                <span class="desc">
+                  Uses your own OpenAI key. Screenshots are sent to OpenAI for
+                  analysis.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <!-- Local detail panel. -->
+          <div class="panel" id="panel-local">
+            <h3>Local setup (Ollama)</h3>
+            <p class="muted" style="margin: 0">
+              Rocky will talk to Ollama running on your machine.
+            </p>
+            <label class="field" for="ollama-host">Ollama host</label>
+            <input type="text" id="ollama-host" autocomplete="off" spellcheck="false" />
+            <p class="muted" style="margin: 4px 0 0">Local mode accepts loopback hosts only.</p>
+            <label class="field" for="ollama-model">Vision model</label>
+            <input type="text" id="ollama-model" autocomplete="off" spellcheck="false" />
+            <div class="row">
+              <button type="button" class="secondary" id="check-ollama">Check Ollama</button>
+            </div>
+            <div class="status muted" id="ollama-status"></div>
+          </div>
+
+          <!-- Cloud detail panel. -->
+          <div class="panel" id="panel-cloud" hidden>
+            <h3>Cloud setup (OpenAI)</h3>
+            <p class="muted" style="margin: 0 0 4px">
+              With cloud, each screenshot is sent to OpenAI under
+              <strong>your own API key</strong> for analysis. The on-device option
+              keeps screenshots local; cloud does not. Your key is validated, then
+              stored encrypted in your Mac's keychain — it is never written to a
+              file or logged.
+            </p>
+
+            <label class="check" for="cloud-optin" style="margin-top: 12px">
+              <input type="checkbox" id="cloud-optin" />
+              <span class="label">
+                I agree to send screenshots to OpenAI
+                <span class="sub">Required to use the cloud provider.</span>
+              </span>
+            </label>
+
+            <label class="field" for="openai-key">OpenAI API key</label>
+            <input
+              type="password"
+              id="openai-key"
+              placeholder="sk-…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="row">
+              <button type="button" class="secondary" id="validate-key">Save &amp; validate key</button>
+            </div>
+            <div class="status muted" id="key-status"></div>
+          </div>
+        </section>
+
+        <!-- 3. What Rocky calls you (optional). -->
+        <section>
+          <h2>What does Rocky call you?</h2>
+          <p class="muted">
+            Rocky asks: what does Rocky call you, question? Leave it as
+            <strong>buddy</strong> if you like. You can change this anytime in
+            Settings.
+          </p>
+          <label class="field" for="call-name">Rocky calls you</label>
+          <input
+            type="text"
+            id="call-name"
+            placeholder="buddy"
+            maxlength="24"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </section>
+
+        <!-- 4. Enable. Disabled until requirements are met. -->
+        <button type="button" class="primary" id="enable" disabled>Enable Rocky</button>
+        <div class="status warn" id="enable-status" style="text-align: center"></div>
+
+        <p class="foot">You can change any of this later from Rocky's menu.</p>
+      </div>
+    </div>
+
+    <script src="consent.js"></script>
+  </body>
+</html>

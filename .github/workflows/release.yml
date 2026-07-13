@@ -1,0 +1,62 @@
+# Build and publish an unsigned macOS DMG whenever a version tag is pushed.
+#
+#   npm version minor        # bumps package.json + creates the vX.Y.Z tag
+#   git push --follow-tags   # triggers this workflow
+#
+# The DMG lands on the tag's GitHub Release; the in-app update checker
+# (src/main/updates.ts) reads releases/latest to offer it to users.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    env:
+      # Never look for a signing identity — this build is deliberately unsigned.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "package.json is $PKG_VERSION but the tag is $TAG_VERSION" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder --mac --publish never
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.dmg
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            1. Download the `.dmg` below and open it.
+            2. Drag **Rocky Companion** into **Applications** (replace the old
+               one if asked — settings and memory live elsewhere and survive).
+            3. First open only: the app is not code-signed, so macOS will warn
+               you. **Right-click the app → Open → Open**, or run:
+               `xattr -dr com.apple.quarantine "/Applications/Rocky Companion.app"`
+            4. Grant Screen Recording permission when Rocky asks for his senses.

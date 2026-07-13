@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Renderer runs with contextIsolation ON; the only privilege is window.rocky. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;"
+    />
+    <title>Rocky — Settings</title>
+    <!--
+      Self-contained, compact dark styling. The settings window is its own small
+      surface and does not share styles.css, so all of its CSS lives inline here.
+    -->
+    <style>
+      :root {
+        --bg: #16181d;
+        --panel: #1e2129;
+        --panel-2: #252934;
+        --border: #313643;
+        --text: #e6e8ee;
+        --muted: #9aa1b1;
+        --accent: #7cc4ff;
+        --accent-dim: #2a4d66;
+        --ok: #6ee7a8;
+        --warn: #ffce6e;
+        --err: #ff8a8a;
+        --radius: 10px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font:
+          13px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        padding: 16px 18px 80px;
+      }
+
+      h1 {
+        font-size: 16px;
+        font-weight: 650;
+        margin: 0 0 4px;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        font-size: 12px;
+        margin: 0 0 16px;
+      }
+
+      .section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        margin-bottom: 14px;
+      }
+
+      .section > h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        font-weight: 600;
+        margin: 0 0 12px;
+      }
+
+      .field {
+        margin-bottom: 12px;
+      }
+
+      .field:last-child {
+        margin-bottom: 0;
+      }
+
+      label.row {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      label.block {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 5px;
+      }
+
+      input[type="text"],
+      input[type="password"],
+      input[type="number"],
+      select,
+      textarea {
+        width: 100%;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        color: var(--text);
+        padding: 7px 9px;
+        font-size: 13px;
+        outline: none;
+        font-family: inherit;
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 52px;
+        line-height: 1.45;
+      }
+
+      input[type="text"]:focus,
+      input[type="password"]:focus,
+      input[type="number"]:focus,
+      select:focus,
+      textarea:focus {
+        border-color: var(--accent-dim);
+      }
+
+      input[type="checkbox"],
+      input[type="radio"] {
+        width: 15px;
+        height: 15px;
+        accent-color: var(--accent);
+        margin: 0;
+        flex: none;
+      }
+
+      .radio-group {
+        display: flex;
+        gap: 10px;
+      }
+
+      .radio-card {
+        flex: 1;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        background: var(--panel-2);
+        cursor: pointer;
+        transition:
+          border-color 0.15s,
+          background 0.15s;
+      }
+
+      .radio-card.selected {
+        border-color: var(--accent);
+        background: var(--accent-dim);
+      }
+
+      .radio-card .title {
+        font-weight: 600;
+      }
+
+      .radio-card .tag {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+
+      .inline {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .inline input {
+        flex: 1;
+      }
+
+      button {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        color: var(--text);
+        padding: 7px 12px;
+        font-size: 12.5px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      button:hover {
+        border-color: var(--accent-dim);
+      }
+
+      button.primary {
+        background: var(--accent-dim);
+        border-color: var(--accent);
+        color: #eaf6ff;
+        font-weight: 600;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .hint {
+        font-size: 11.5px;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+
+      .hint code {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 11px;
+      }
+
+      .status {
+        font-size: 12px;
+        margin-top: 8px;
+        min-height: 16px;
+      }
+
+      .status.ok {
+        color: var(--ok);
+      }
+      .status.warn {
+        color: var(--warn);
+      }
+      .status.err {
+        color: var(--err);
+      }
+      .status.muted {
+        color: var(--muted);
+      }
+
+      /* Cloud privacy disclosure callout. */
+      .disclosure {
+        background: rgba(255, 206, 110, 0.08);
+        border: 1px solid rgba(255, 206, 110, 0.35);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 12px;
+        color: #f3e7c8;
+        line-height: 1.5;
+        margin-bottom: 12px;
+      }
+
+      .disclosure strong {
+        color: var(--warn);
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      .range-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .range-row input[type="range"] {
+        flex: 1;
+        accent-color: var(--accent);
+      }
+
+      .range-row input[type="number"] {
+        width: 64px;
+        flex: none;
+      }
+
+      .range-row .unit {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      /* Sticky save bar pinned to the bottom of the window. */
+      .savebar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 18px;
+        background: rgba(22, 24, 29, 0.92);
+        border-top: 1px solid var(--border);
+        backdrop-filter: blur(8px);
+      }
+
+      .savebar .save-status {
+        flex: 1;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Rocky settings</h1>
+    <p class="subtitle">Rocky stays private by default. Choose how he looks at your screen.</p>
+
+    <!-- ── Provider ───────────────────────────────────────────────────────── -->
+    <section class="section">
+      <h2>Vision provider</h2>
+      <div class="radio-group" id="provider-group">
+        <label class="radio-card" id="provider-local-card">
+          <span class="inline" style="gap: 9px">
+            <input type="radio" name="provider" id="provider-local" value="local" />
+            <span class="title">Local (Ollama)</span>
+          </span>
+          <span class="tag">private, on-device</span>
+        </label>
+        <label class="radio-card" id="provider-cloud-card">
+          <span class="inline" style="gap: 9px">
+            <input type="radio" name="provider" id="provider-cloud" value="cloud" />
+            <span class="title">Cloud (OpenAI)</span>
+          </span>
+          <span class="tag">sends screenshots to OpenAI</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Local (Ollama) ─────────────────────────────────────────────────── -->
+    <section class="section" id="local-section">
+      <h2>Local — Ollama</h2>
+      <div class="field">
+        <label class="block" for="ollama-host">Ollama host</label>
+        <input type="text" id="ollama-host" spellcheck="false" autocomplete="off" placeholder="http://localhost:11434" />
+        <div class="hint">For the local privacy guarantee, only localhost, 127.0.0.1, and ::1 are accepted.</div>
+      </div>
+      <div class="field">
+        <label class="block" for="ollama-model">Vision model</label>
+        <input type="text" id="ollama-model" spellcheck="false" autocomplete="off" placeholder="llama3.2-vision" />
+      </div>
+      <div class="field">
+        <button id="check-ollama">Check Ollama</button>
+        <div class="status muted" id="ollama-status"></div>
+      </div>
+    </section>
+
+    <!-- ── Cloud (OpenAI) ─────────────────────────────────────────────────── -->
+    <section class="section" id="cloud-section">
+      <h2>Cloud — OpenAI</h2>
+
+      <div class="disclosure">
+        <strong>Heads up:</strong> In cloud mode, screenshots of your screen are sent to
+        <strong>OpenAI</strong> under your own API account for analysis. They leave this device.
+        The <strong>Local (Ollama)</strong> option keeps every screenshot on-device.
+      </div>
+
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="cloud-consent" />
+          <span>I understand and want to use cloud (OpenAI)</span>
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="block" for="openai-key">OpenAI API key</label>
+        <div class="inline">
+          <input type="password" id="openai-key" spellcheck="false" autocomplete="off" placeholder="sk-…" />
+          <button id="save-key">Save</button>
+          <button id="remove-key">Remove key</button>
+        </div>
+        <div class="status muted" id="key-status"></div>
+      </div>
+
+      <div class="field">
+        <label class="block" for="openai-model">OpenAI model</label>
+        <input type="text" id="openai-model" spellcheck="false" autocomplete="off" placeholder="gpt-5.4-mini" />
+        <div class="hint">Use a current GPT-5.x vision model. <code>gpt-4o</code> is retired.</div>
+      </div>
+    </section>
+
+    <!-- ── Behavior ───────────────────────────────────────────────────────── -->
+    <section class="section">
+      <h2>Behavior</h2>
+
+      <div class="field">
+        <label class="block" for="call-name">What Rocky calls you</label>
+        <input
+          type="text"
+          id="call-name"
+          placeholder="buddy"
+          maxlength="24"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="hint">Rocky addresses you by this in speech bubbles and spoken lines. Empty falls back to “buddy”.</div>
+      </div>
+
+      <div class="field">
+        <label class="block" for="interval">How often Rocky looks</label>
+        <div class="range-row">
+          <input type="range" id="interval-range" min="1" max="120" step="1" />
+          <input type="number" id="interval" min="1" max="120" step="1" />
+          <span class="unit">min</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="muted" />
+          <span>Mute Rocky's voice</span>
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="update-check" />
+          <span>Tell me about new versions</span>
+        </label>
+        <div class="hint">
+          Checks the GitHub Releases page about once a day. This is Rocky's only
+          network call besides your chosen vision provider; nothing about you is sent.
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="click-through" />
+          <span>Click-through (float over work)</span>
+        </label>
+        <div class="hint">When on, Rocky ignores the mouse so you can click straight through him. This also disables the quick controls under Rocky.</div>
+      </div>
+    </section>
+
+    <!-- ── Capture exclusions ─────────────────────────────────────────────── -->
+    <section class="section">
+      <h2>Capture exclusions</h2>
+      <div class="field">
+        <label class="block" for="blocked-apps">Never observe these frontmost apps</label>
+        <textarea
+          id="blocked-apps"
+          rows="5"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="1Password&#10;Signal&#10;*Bank*"
+        ></textarea>
+        <div class="hint">
+          One macOS app display name per line. An exact name such as <code>1Password</code>
+          matches only that app. Use <code>*</code> as a wildcard: <code>*Bank*</code> matches
+          any app name containing “Bank”, and <code>Company *</code> matches names beginning
+          with “Company ”. Matching ignores letter case.
+        </div>
+        <div class="hint">
+          When a listed app is frontmost, observations are skipped before any screenshot is taken.
+        </div>
+        <div class="status muted" id="blocked-apps-status">No apps excluded.</div>
+      </div>
+    </section>
+
+    <!-- ── Creature ───────────────────────────────────────────────────────── -->
+    <section class="section">
+      <h2>Creature</h2>
+      <div class="field">
+        <label class="block" for="creature-skin">Appearance</label>
+        <select id="creature-skin"></select>
+        <div class="hint">
+          The built-in faceless Rocky is drawn procedurally. Drop a skin folder (a
+          <code>skin.json</code> + images) into the skins directory to use your own art, then Refresh.
+        </div>
+      </div>
+      <div class="field">
+        <div class="inline">
+          <button id="open-skins-folder">Open skins folder</button>
+          <button id="refresh-skins">Refresh</button>
+        </div>
+        <div class="status muted" id="skin-status"></div>
+      </div>
+    </section>
+
+    <!-- ── Voice ──────────────────────────────────────────────────────────── -->
+    <section class="section">
+      <h2>Voice</h2>
+
+      <div class="field">
+        <label class="block" for="voice-mode">How Rocky sounds</label>
+        <select id="voice-mode">
+          <option value="procedural">Musical tones (procedural, on-device)</option>
+          <option value="openai">Spoken voice (OpenAI TTS)</option>
+        </select>
+        <div class="hint">
+          Eridian chords are Rocky's primary, fully on-device voice. Optional spoken translation
+          sends only Rocky's generated line (never a screenshot) to OpenAI under your key.
+        </div>
+      </div>
+
+      <div id="tts-fields">
+        <div class="disclosure">
+          <strong>Cloud voice:</strong> spoken translation sends Rocky's generated line text to
+          OpenAI. It never sends the screenshot.
+        </div>
+        <div class="field">
+          <label class="row">
+            <input type="checkbox" id="tts-consent" />
+            <span>I agree to send Rocky's translation text to OpenAI</span>
+          </label>
+        </div>
+        <div class="field">
+          <label class="block" for="tts-voice">Voice</label>
+          <select id="tts-voice">
+            <option value="alloy">alloy</option>
+            <option value="ash">ash</option>
+            <option value="ballad">ballad</option>
+            <option value="coral">coral</option>
+            <option value="echo">echo</option>
+            <option value="fable">fable</option>
+            <option value="nova">nova</option>
+            <option value="onyx">onyx</option>
+            <option value="sage">sage</option>
+            <option value="shimmer">shimmer</option>
+            <option value="verse">verse</option>
+          </select>
+          <div class="hint">OpenAI's own synthetic voices. Not modeled on any real person.</div>
+        </div>
+
+        <div class="field">
+          <label class="block" for="tts-model">TTS model</label>
+          <select id="tts-model">
+            <option value="gpt-4o-mini-tts">gpt-4o-mini-tts (steerable)</option>
+            <option value="tts-1">tts-1 (classic, fast)</option>
+            <option value="tts-1-hd">tts-1-hd (classic, higher fidelity)</option>
+          </select>
+          <div class="hint">tts-1 / tts-1-hd play the plain natural preset and ignore the delivery style below.</div>
+        </div>
+
+        <div class="field">
+          <label class="block" for="tts-instructions">Delivery style (gpt-4o-mini-tts only)</label>
+          <textarea id="tts-instructions" spellcheck="false" placeholder="Leave empty for the natural, unstyled voice"></textarea>
+          <div class="hint">Shapes pace and warmth (not identity). Empty = the natural preset. Avoid pace words like "slowly".</div>
+        </div>
+
+        <div class="field">
+          <label class="block" for="voice-pitch">Pitch</label>
+          <div class="range-row">
+            <input type="range" id="voice-pitch-range" min="-6" max="3" step="1" />
+            <input type="number" id="voice-pitch" min="-6" max="3" step="1" />
+            <span class="unit">semitones</span>
+          </div>
+          <div class="hint">0 = the voice's natural pitch and speed. Non-zero shifts pitch and slightly changes tempo.</div>
+        </div>
+
+        <div class="field">
+          <label class="row">
+            <input type="checkbox" id="music-underlay" />
+            <span>Play Rocky's Eridian chords under the spoken translation</span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label class="row">
+            <input type="checkbox" id="expressive-cadence" />
+            <span>Expressive cadence (phrase pauses &amp; pacing)</span>
+          </label>
+          <div class="hint">Speaks each line as short phrases with a beat between them, instead of one flat read.</div>
+        </div>
+
+        <div class="field">
+          <button id="test-voice">Play test line</button>
+          <div class="status muted" id="voice-status">Save cloud-voice consent before testing.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Screen Recording permission ────────────────────────────────────── -->
+    <section class="section">
+      <h2>Screen recording</h2>
+      <div class="field">
+        <div class="status muted" id="screen-status">Checking…</div>
+        <div class="inline" style="margin-top: 8px">
+          <button id="open-screen-settings" class="hidden">Open System Settings</button>
+          <button id="recheck-screen">Re-check</button>
+        </div>
+        <div class="hint hidden" id="screen-hint">
+          Rocky cannot see your screen until macOS grants Screen Recording. When running from
+          source, the app appears as <strong>Electron</strong> in that list (the permission
+          belongs to the binary, not the name). Enable it, then relaunch Rocky — macOS only
+          applies the grant to a fresh launch. If the toggle looks stuck from an earlier
+          denial, run <code>tccutil reset ScreenCapture</code> in Terminal and try again.
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Sticky save bar ────────────────────────────────────────────────── -->
+    <div class="savebar">
+      <div class="save-status status muted" id="save-status"></div>
+      <button id="close-btn">Close</button>
+      <button id="save-btn" class="primary">Save</button>
+    </div>
+
+    <!-- The only external script; built from settings.ts by esbuild. -->
+    <script src="settings.js"></script>
+  </body>
+</html>

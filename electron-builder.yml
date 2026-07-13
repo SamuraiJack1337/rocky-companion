@@ -1,0 +1,43 @@
+# electron-builder configuration.
+# Build an unsigned macOS .dmg with:  npm run dist:mac
+# Releases are produced by .github/workflows/release.yml on version tags.
+#
+# Nothing here bakes in any secret. Users supply their own key at runtime.
+appId: com.rockycompanion.app
+productName: Rocky Companion
+copyright: Copyright © 2026 Rocky Companion contributors
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+# Rocky is a menu-bar / floating companion, not a normal windowed app.
+mac:
+  category: public.app-category.utilities
+  icon: build/icon.icns
+  # Deliberately unsigned: no Developer ID yet. Users bypass Gatekeeper once
+  # (right-click → Open); release notes and the README carry the instructions.
+  identity: null
+  # One DMG that runs on both Apple Silicon and Intel Macs.
+  target:
+    - target: dmg
+      arch: universal
+  # Screen Recording permission prompt copy (Info.plist).
+  extendInfo:
+    NSScreenCaptureUsageDescription: >-
+      Rocky periodically takes a screenshot so he can understand, at a high
+      level, what you are doing and react in character. Images are never saved
+      to disk. You can pause Rocky at any time.
+    # Hide from the Dock — Rocky lives in the menu bar and floats on screen.
+    LSUIElement: true
+
+dmg:
+  title: Rocky Companion
+  artifactName: RockyCompanion-${version}-mac.dmg
+
+# The CI workflow uploads artifacts itself; never auto-publish from a laptop.
+publish: null
