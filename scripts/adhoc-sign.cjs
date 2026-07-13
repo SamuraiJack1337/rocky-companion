@@ -18,6 +18,12 @@ const path = require('node:path');
 
 module.exports = async function adhocSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
+  // Universal builds pack per-arch slices into "<out>-x64-temp"/"<out>-arm64-temp"
+  // (afterPack fires for each) before merging; signing a slice rewrites its
+  // CodeResources and the merge then rejects the non-identical files. Skip the
+  // slices — afterPack fires once more on the merged universal app, and that
+  // is the copy that ships.
+  if (context.appOutDir.endsWith('-temp')) return;
   const appName = context.packager.appInfo.productFilename;
   const appPath = path.join(context.appOutDir, `${appName}.app`);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
