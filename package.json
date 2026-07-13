@@ -1,6 +1,6 @@
 {
   "name": "rocky-companion",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "A privacy-first desktop companion featuring Rocky as a faceless Eridian engineering collaborator.",
   "license": "MIT",
