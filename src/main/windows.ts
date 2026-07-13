@@ -8,8 +8,8 @@ import { store } from './store';
 
 // The companion window is intentionally small. It is bigger than the creature
 // itself so the translator has room above without clipping.
-const COMPANION_W = 300;
-const COMPANION_H = 320;
+const COMPANION_W = 225;
+const COMPANION_H = 240;
 const EDGE_MARGIN = 24;
 
 const PRELOAD = path.join(__dirname, 'preload.js');

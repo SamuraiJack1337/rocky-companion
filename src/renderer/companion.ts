@@ -30,7 +30,7 @@ import { installControls } from './controls';
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /** Logical (CSS-pixel) size of the creature stage. The window is fixed to this. */
-const STAGE = 220;
+const STAGE = 165;
 
 // CreatureMode and the CreatureRenderer interface are defined in ./skins so the
 // procedural Creature and a drop-in SpriteSkin share one surface.

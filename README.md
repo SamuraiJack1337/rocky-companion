@@ -26,8 +26,7 @@ Rocky is an [Electron](https://www.electronjs.org/) + TypeScript desktop compani
 - **Character-authentic.** Rocky is treated as a scientific and engineering
   equal, never a pet. The built-in faceless performance uses weight, silhouette,
   five articulated limbs, three digits per limb, and a musical language.
-- **Rights-controlled.** This project is intended for an authorized production.
-  The MIT license covers the software implementation only; Project Hail Mary
+- **Rights-controlled.** The MIT license covers the software implementation only; Project Hail Mary
   characters, names, likenesses, and other underlying IP are not relicensed.
 - **macOS-first.** Phase 1 targets macOS. Windows support is a future,
   non-committed idea (see [Future](#future)).
@@ -362,6 +361,10 @@ npm run typecheck  # tsc --noEmit (strict type checking)
 npm test           # privacy-boundary, scheduler/capture-rule, and local-host tests
 ```
 
+> **Testing note:** the majority of end-to-end testing to date has been done
+> against the **Cloud (OpenAI)** provider. Local (Ollama) paths follow the same
+> code, but have seen less real-world exercise — feedback welcome.
+
 ---
 
 ## Future
@@ -373,6 +376,14 @@ Ideas explicitly **not** part of Phase 1, and not promised:
   **never bake a shared key into the app**.
 - **Windows support.**
 - **Cloud sync** of settings.
+
+### Long-term vision
+
+In the long run, Rocky is intended to grow into a true ambient collaborator: one
+that builds up richer context about you over time and can act on your behalf —
+scheduling, reminders, research, and lightweight task execution — just like Rocky
+himself would, working alongside you as a trusted engineering partner rather than
+a passive observer.
 
 ---
 
