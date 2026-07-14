@@ -70,7 +70,7 @@ for (let i = 0; i < argv.length; i++) {
   } else positional.push(argv[i]);
 }
 const sheetPath = positional[0];
-const outDir = positional[1] ?? 'output/skins/rocky-official';
+const outDir = positional[1] ?? 'output/skins/rocky';
 const rows = Number(flags.rows ?? 4);
 const cols = Number(flags.cols ?? 4);
 const quality = flags.quality ?? 'medium';

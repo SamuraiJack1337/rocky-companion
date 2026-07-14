@@ -19,9 +19,8 @@ node_modules/
 dist/
 out/
 release/
-# Local art experiments / generated sample-skin output — never published.
+# Local art experiments — never published.
 output/
-samples/skins/sample-creature/
 # build/ holds electron-builder resources; generated intermediates are ignored
 # but the committed app icon ships with the repo.
 build/*
