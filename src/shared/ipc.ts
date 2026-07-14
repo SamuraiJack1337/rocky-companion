@@ -56,6 +56,8 @@ export const CH = {
   UPDATE_OPEN: 'update:open',
   UPDATE_DISMISS: 'update:dismiss',
   CLOSE_WINDOW: 'window:close-self',
+  /** Manual companion-window drag (the canvas is no-drag so Rocky is clickable). */
+  WINDOW_DRAG: 'window:drag',
   QUIT: 'app:quit',
 } as const;
 
@@ -140,6 +142,10 @@ export interface RockyAPI {
   // ── consent + lifecycle ──────────────────────────────────────────────────
   submitConsent(payload: ConsentPayload): Promise<Settings>;
   lookNow(): Promise<void>;
+  /** Anchor a manual window drag at the window's current position. */
+  beginWindowDrag(): void;
+  /** Move the window to (anchor + dx/dy), in screen pixels since the anchor. */
+  dragWindowBy(dx: number, dy: number): void;
   setClickThrough(enabled: boolean): Promise<void>;
   dismissBubble(): void;
   openSettings(): Promise<void>;

@@ -61,6 +61,9 @@ const api: RockyAPI = {
   submitConsent: (payload: ConsentPayload) =>
     ipcRenderer.invoke(CH.CONSENT_SUBMIT, payload) as Promise<Settings>,
   lookNow: () => ipcRenderer.invoke(CH.LOOK_NOW) as Promise<void>,
+  beginWindowDrag: () => ipcRenderer.send(CH.WINDOW_DRAG, { phase: 'start' }),
+  dragWindowBy: (dx: number, dy: number) =>
+    ipcRenderer.send(CH.WINDOW_DRAG, { phase: 'move', dx, dy }),
   setClickThrough: (enabled: boolean) =>
     ipcRenderer.invoke(CH.SET_CLICK_THROUGH, enabled) as Promise<void>,
   dismissBubble: () => ipcRenderer.send(CH.DISMISS_BUBBLE),

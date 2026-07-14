@@ -70,9 +70,15 @@ const removeKeyBtn = el<HTMLButtonElement>('remove-key');
 const keyStatus = el<HTMLDivElement>('key-status');
 const openaiModel = el<HTMLInputElement>('openai-model');
 
+const remarkRealistic = el<HTMLInputElement>('remark-realistic');
+const remarkClassic = el<HTMLInputElement>('remark-classic');
+const remarkRealisticCard = el<HTMLLabelElement>('remark-realistic-card');
+const remarkClassicCard = el<HTMLLabelElement>('remark-classic-card');
+
 const callNameInput = el<HTMLInputElement>('call-name');
 const intervalRange = el<HTMLInputElement>('interval-range');
 const intervalNumber = el<HTMLInputElement>('interval');
+const strictIntervalInput = el<HTMLInputElement>('strict-interval');
 const mutedInput = el<HTMLInputElement>('muted');
 const updateCheckInput = el<HTMLInputElement>('update-check');
 const clickThroughInput = el<HTMLInputElement>('click-through');
@@ -124,6 +130,12 @@ function paintProviderCards(): void {
   providerCloudCard.classList.toggle('selected', providerCloud.checked);
 }
 
+/** Reflect the chosen remark style into its radio cards' selected styling. */
+function paintRemarkCards(): void {
+  remarkRealisticCard.classList.toggle('selected', remarkRealistic.checked);
+  remarkClassicCard.classList.toggle('selected', remarkClassic.checked);
+}
+
 // ── Cloud key status ─────────────────────────────────────────────────────────
 
 /** Refresh the "key stored?" line and toggle the Remove button. NEVER shows the key. */
@@ -166,11 +178,16 @@ function applySettings(s: Settings): void {
   cloudConsent.checked = s.cloudConsentGiven;
   openaiModel.value = s.openaiModel;
 
+  remarkRealistic.checked = s.remarkStyle !== 'classic';
+  remarkClassic.checked = s.remarkStyle === 'classic';
+  paintRemarkCards();
+
   callNameInput.value = s.callName;
 
   const minutes = clampInterval(s.intervalMinutes);
   intervalRange.value = String(minutes);
   intervalNumber.value = String(minutes);
+  strictIntervalInput.checked = s.strictInterval;
 
   mutedInput.checked = s.muted;
   updateCheckInput.checked = s.updateCheckEnabled;
@@ -300,6 +317,10 @@ async function refreshScreenPermission(): Promise<void> {
 // Provider radios — repaint selection styling immediately on change.
 providerLocal.addEventListener('change', paintProviderCards);
 providerCloud.addEventListener('change', paintProviderCards);
+
+// Remark-style radios — same repaint pattern.
+remarkRealistic.addEventListener('change', paintRemarkCards);
+remarkClassic.addEventListener('change', paintRemarkCards);
 
 // Keep the range slider and the number box in lockstep, both clamped to [1,120].
 function syncIntervalFrom(source: HTMLInputElement): void {
@@ -491,8 +512,10 @@ saveBtn.addEventListener('click', async () => {
     ollamaModel: ollamaModel.value.trim() || DEFAULT_SETTINGS.ollamaModel,
     openaiModel: openaiModel.value.trim() || DEFAULT_SETTINGS.openaiModel,
     cloudConsentGiven: cloudConsent.checked,
+    remarkStyle: remarkClassic.checked ? 'classic' : 'realistic',
     callName: callNameInput.value.trim() || DEFAULT_SETTINGS.callName,
     intervalMinutes: clampInterval(Number(intervalNumber.value)),
+    strictInterval: strictIntervalInput.checked,
     muted: mutedInput.checked,
     updateCheckEnabled: updateCheckInput.checked,
     clickThrough: clickThroughInput.checked,

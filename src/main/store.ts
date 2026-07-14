@@ -133,6 +133,9 @@ class SettingsStore {
     merged.blockedApps = normalizeBlockedApps(merged.blockedApps);
     merged.windowPosition = normalizeWindowPosition(merged.windowPosition);
     merged.callName = normalizeCallName(merged.callName);
+    if (merged.remarkStyle !== 'classic' && merged.remarkStyle !== 'realistic') {
+      merged.remarkStyle = DEFAULT_SETTINGS.remarkStyle;
+    }
     if (!isLoopbackHost(merged.ollamaHost)) {
       merged.ollamaHost = DEFAULT_SETTINGS.ollamaHost;
     }

@@ -15,7 +15,14 @@ body.companion {
   inset: 0;
   width: 100%;
   height: 100%;
-  -webkit-app-region: drag;
+  /* No OS drag region: companion.ts implements drag manually (pointer deltas
+     over IPC) so that a plain CLICK on Rocky can ask him to look now. */
+  -webkit-app-region: no-drag;
+  cursor: grab;
+}
+
+#rocky-canvas.dragging {
+  cursor: grabbing;
 }
 
 /* A compact, hand-built translator rather than a cartoon speech bubble. */

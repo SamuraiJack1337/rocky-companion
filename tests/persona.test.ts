@@ -71,6 +71,78 @@ test('malformed responses become unknown observations', () => {
   assert.deepEqual(parseObservation('not json and not screen text'), UNKNOWN_OBSERVATION);
 });
 
+test('classic style discards a remark the model volunteers', () => {
+  const raw = '{"activity":"coding","mood":"curious","sensitive":false,"remark":"You chase a bug, {name}?"}';
+  assert.equal('remark' in parseObservation(raw, 'classic'), false);
+  assert.equal('remark' in parseObservation(raw), false); // classic is the parse default
+});
+
+test('realistic style keeps a sanitized remark', () => {
+  const raw =
+    '{"activity":"coding","mood":"curious","sensitive":false,"remark":"  You chase a\\nstubborn bug, {name},   question?  "}';
+  assert.equal(
+    parseObservation(raw, 'realistic').remark,
+    'You chase a stubborn bug, {name}, question?',
+  );
+});
+
+test('realistic remarks are length-clamped and empty ones dropped', () => {
+  const long = JSON.stringify({
+    activity: 'reading', mood: 'calm', sensitive: false, remark: 'x'.repeat(1000),
+  });
+  const remark = parseObservation(long, 'realistic').remark;
+  assert.ok(remark && remark.length <= 200);
+  const empty = '{"activity":"reading","mood":"calm","sensitive":false,"remark":"   "}';
+  assert.equal('remark' in parseObservation(empty, 'realistic'), false);
+});
+
+test('sensitive observations never keep a remark, even in realistic style', () => {
+  const raw =
+    '{"activity":"coding","mood":"calm","sensitive":true,"remark":"Your bank balance is visible."}';
+  const observation = parseObservation(raw, 'realistic');
+  assert.equal('remark' in observation, false);
+  assert.equal(observation.activity, 'sensitive');
+});
+
+test('a realistic remark becomes the spoken line with placeholders rendered', () => {
+  const reply = composeRockyReply(
+    {
+      activity: 'coding',
+      mood: 'curious',
+      sensitive: false,
+      detail: 'debugging',
+      remark: 'That bug hides well, {name}. We corner it, question?',
+    },
+    { name: 'Grace' },
+  );
+  assert.equal(reply.line, 'That bug hides well, Grace. We corner it, question?');
+  assert.equal(reply.gesture, 'calculate'); // performance still comes from the enums
+});
+
+test('without a remark the reply falls back to the template pool', () => {
+  const reply = composeRockyReply({ activity: 'coding', mood: 'curious', sensitive: false, detail: 'none' });
+  assert.ok(reply.line.length > 0);
+});
+
+test('late night keeps a realistic remark but forces the sleepy performance', () => {
+  const reply = composeRockyReply(
+    { activity: 'coding', mood: 'curious', sensitive: false, detail: 'none', remark: 'Still coding? Rest soon, {name}.' },
+    { lateNight: true, name: 'Grace' },
+  );
+  assert.equal(reply.mood, 'sleepy');
+  assert.equal(reply.gesture, 'watch');
+  assert.equal(reply.line, 'Still coding? Rest soon, Grace.');
+});
+
+test('late night without a remark falls back to the templated rest nudge', () => {
+  const reply = composeRockyReply(
+    { activity: 'coding', mood: 'curious', sensitive: false, detail: 'none' },
+    { lateNight: true },
+  );
+  assert.equal(reply.mood, 'sleepy');
+  assert.ok(reply.line.includes('sleep'));
+});
+
 test('character stage receives enums and adds performance direction', () => {
   const reply = composeRockyReply({ activity: 'coding', mood: 'curious', sensitive: false, detail: 'none' });
   assert.equal(reply.activity, 'coding');

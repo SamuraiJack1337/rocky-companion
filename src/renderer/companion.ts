@@ -875,7 +875,77 @@ class Companion {
 
     this.subscribe();
     this.installResize();
+    this.installPointer();
     this.loop(performance.now());
+  }
+
+  /**
+   * Click vs drag on Rocky himself. The canvas is a no-drag region, so we
+   * implement window dragging manually (pointer deltas streamed to main) and
+   * treat a press that never travels as a click — a poke asking Rocky to look
+   * at the screen right now.
+   */
+  private installPointer(): void {
+    const CLICK_SLOP_PX = 4;
+    const CLICK_MAX_MS = 600;
+    let down = false;
+    let dragging = false;
+    let downX = 0;
+    let downY = 0;
+    let downAt = 0;
+
+    this.canvas.addEventListener('pointerdown', (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      down = true;
+      dragging = false;
+      downX = e.screenX;
+      downY = e.screenY;
+      downAt = performance.now();
+      // Capture so we keep receiving moves even if the cursor briefly outruns
+      // the window while it is being repositioned.
+      this.canvas.setPointerCapture(e.pointerId);
+    });
+
+    this.canvas.addEventListener('pointermove', (e: PointerEvent) => {
+      if (!down) return;
+      const dx = e.screenX - downX;
+      const dy = e.screenY - downY;
+      if (!dragging && Math.hypot(dx, dy) > CLICK_SLOP_PX) {
+        dragging = true;
+        this.canvas.classList.add('dragging');
+        window.rocky.beginWindowDrag();
+      }
+      if (dragging) window.rocky.dragWindowBy(dx, dy);
+    });
+
+    const end = () => {
+      if (!down) return;
+      down = false;
+      this.canvas.classList.remove('dragging');
+      if (!dragging && performance.now() - downAt <= CLICK_MAX_MS) this.pokeLook();
+      dragging = false;
+    };
+    this.canvas.addEventListener('pointerup', end);
+    this.canvas.addEventListener('pointercancel', end);
+  }
+
+  /** Throttle stamp for pokes, so click-spam can't queue a capture barrage. */
+  private lastPokeAt = 0;
+
+  /** A poke: acknowledge instantly, then ask main for a real look. */
+  private pokeLook(): void {
+    const now = performance.now();
+    if (now - this.lastPokeAt < 2_000) return;
+    this.lastPokeAt = now;
+    // Immediate physical acknowledgement so the poke never feels ignored —
+    // the observation reply (or paused/sleepy line) follows from main.
+    this.active.flash(0.5);
+    if (!this.paused && this.active.getMode() !== 'talk') {
+      this.currentGesture = 'observe';
+      this.active.setGesture(this.currentGesture);
+      this.active.setMode('curious');
+    }
+    void window.rocky.lookNow();
   }
 
   /** Mirror the voice-related settings into the local fields. */

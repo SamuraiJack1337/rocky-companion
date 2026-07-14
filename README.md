@@ -19,10 +19,12 @@ compact translator to work alongside you.
 
 Rocky is an [Electron](https://www.electronjs.org/) + TypeScript desktop companion:
 
-- **Gentle and privacy-first.** Rocky reacts to the *kind* of activity on screen
-  (coding, writing, reading, watching video, idle…) at a **high level only**. He
-  never transcribes, quotes, or repeats on-screen text, and he deliberately looks
-  away from anything that appears sensitive (logins, banking, private messages).
+- **Gentle and privacy-conscious.** By default Rocky reacts **realistically** to
+  what he actually sees on screen, but he deliberately looks away from anything
+  that appears sensitive (logins, banking, private messages) — those never get a
+  specific remark. A **Classic** remark style in Settings restores the strict
+  high-level-only pipeline where he never transcribes, quotes, or repeats
+  on-screen text at all.
 - **Character-authentic.** Rocky is treated as a scientific and engineering
   equal, never a pet. The built-in faceless performance uses weight, silhouette,
   five articulated limbs, three digits per limb, and a musical language.
@@ -35,11 +37,19 @@ Rocky is an [Electron](https://www.electronjs.org/) + TypeScript desktop compani
 
 ## Privacy model, in plain terms
 
-Rocky periodically captures a single screenshot and asks a vision model for only
-three fixed fields: activity, mood, and sensitivity. Dialogue and physical
-performance are then generated locally from those enums; the vision layer cannot
-author Rocky's line. How
-that capture is handled depends entirely on which provider you choose:
+Rocky periodically captures a single screenshot and asks a vision model to react
+to it. How much the model may say is your choice (Settings → Behavior):
+
+- **Realistic** *(default)* — the vision model writes Rocky's remark directly
+  about what it sees, alongside fixed activity/mood/sensitivity fields, so lines
+  feel genuinely observed. Screen specifics may therefore appear in the speech
+  bubble (and in the spoken line if the cloud voice is enabled).
+- **Classic** — the model may return **only** the fixed enum fields; dialogue and
+  physical performance are generated locally from those enums and the vision
+  layer cannot author Rocky's line.
+
+In **both** styles, screens judged sensitive never produce a specific remark.
+How the capture itself is handled depends entirely on which provider you choose:
 
 | Provider | Where the screenshot goes | Opt-in required |
 | --- | --- | --- |
@@ -50,10 +60,12 @@ Hard guarantees that hold for **both** providers:
 
 - **Screenshots are NEVER written to disk.** They live in memory only, for the
   moment it takes to analyze them, and are then discarded.
-- **Understanding is enum-only.** Vision output is reduced to a fixed activity
-  category such as `coding`, `meeting`, `idle`, or `sensitive`, plus mood and a
-  sensitivity flag. Extra model output is discarded before character dialogue
-  is generated.
+- **Structured understanding.** Vision output is always parsed into a fixed
+  activity category such as `coding`, `meeting`, `idle`, or `sensitive`, plus
+  mood and a sensitivity flag. In Classic style any extra model output is
+  discarded before character dialogue is generated; in Realistic style only a
+  single sanitized, length-clamped remark passes through — and never for
+  sensitive screens.
 - **Local really means loopback.** Ollama hosts are restricted to `localhost`,
   `127.0.0.1`, or `::1`. A remote endpoint cannot be silently configured as the
   local provider.
@@ -359,8 +371,11 @@ A short architecture note:
   output parsing are **shared**, so behavior is identical regardless of backend.
 - **In-memory capture pipeline.** Screenshots are captured, analyzed, and
   discarded in memory — never persisted.
-- **Two-stage privacy boundary.** Vision returns fixed enums; local character
-  code turns them into dialogue, gesture, and sound without seeing the image.
+- **Selectable remark pipeline.** Realistic style lets the vision model author
+  Rocky's line (sanitized, clamped, stripped for sensitive screens); Classic
+  style keeps the two-stage privacy boundary where vision returns fixed enums
+  and local character code turns them into dialogue, gesture, and sound without
+  seeing the image.
 - **Web Audio Eridian voice.** Five independently detuned oscillators form every
   chord. Eleven stable motifs give greetings, questions, calculations, concern,
   focus, completion, rest, and farewell repeatable musical identities.
@@ -371,6 +386,13 @@ A short architecture note:
   only counters and timestamps used to calculate the relationship stage.
 - **Frontmost-app gate.** macOS LaunchServices supplies only the app display
   name; blocked apps are checked before capture, and window titles/URLs are never requested.
+- **Humanized cadence.** Every scheduled gap carries ±20% jitter, and a light
+  watcher (frontmost app name + system idle seconds, both local-only) grants an
+  occasional extra look when you settle into a new app or return from a long
+  break — rate-limited so events can never stack into spam. Prefer the classic
+  predictable timer? The **Strict clockwork interval** toggle in Settings turns
+  off the jitter and all event-driven looks. Clicking Rocky himself asks for a
+  look right now either way; dragging him still moves the window.
 
 ---
 
@@ -418,8 +440,9 @@ a passive observer.
   and are **never logged**.
 - **Screenshots live in memory only** — they are **never written to disk** and
   image bytes are never logged.
-- **Understanding is high-level only** — Rocky never transcribes or repeats
-  on-screen text, and looks away from anything sensitive.
+- **Sensitive screens are always off-limits** — logins, banking, and private
+  messages never produce a specific remark in either style, and the Classic
+  style guarantees Rocky never transcribes or repeats on-screen text at all.
 - **Blocked apps are skipped before capture**, based only on the frontmost app's
   display name.
 - **Relationship memory contains counters and timestamps only** and can be reset

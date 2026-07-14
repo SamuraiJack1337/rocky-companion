@@ -155,4 +155,24 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.on(CH.CLOSE_WINDOW, (e) => {
     BrowserWindow.fromWebContents(e.sender)?.close();
   });
+  // Manual window drag: the companion canvas is a no-drag region (so clicking
+  // Rocky can mean something), so the renderer streams pointer deltas and main
+  // moves the window. 'start' anchors at the current position; each 'move'
+  // repositions absolutely from that anchor, so dropped messages never drift.
+  let dragAnchor: { x: number; y: number } | null = null;
+  ipcMain.on(CH.WINDOW_DRAG, (e, payload: { phase: 'start' | 'move'; dx?: number; dy?: number }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return;
+    if (payload?.phase === 'start') {
+      const [x, y] = win.getPosition();
+      dragAnchor = { x, y };
+      return;
+    }
+    if (payload?.phase === 'move' && dragAnchor) {
+      const dx = Number(payload.dx);
+      const dy = Number(payload.dy);
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+      win.setPosition(Math.round(dragAnchor.x + dx), Math.round(dragAnchor.y + dy));
+    }
+  });
 }

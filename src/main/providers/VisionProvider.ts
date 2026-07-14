@@ -1,13 +1,14 @@
 // The pluggable vision layer. Rocky's "eyes" come in two flavors — a private,
 // on-device Ollama backend (the default) and an optional cloud OpenAI backend
-// (bring-your-own-key). BOTH must behave identically: same SYSTEM_PROMPT, same
-// buildUserPrompt, same observation parser. This file defines the shared contract and a
-// tiny factory that picks the right implementation from the user's settings.
+// (bring-your-own-key). BOTH must behave identically: same buildSystemPrompt,
+// same buildUserPrompt, same observation parser. This file defines the shared
+// contract and a tiny factory that picks the right implementation from the
+// user's settings.
 //
 // Privacy note: the image bytes (base64) only ever flow through analyze() in
 // memory. Nothing here writes them to disk or logs them.
 
-import type { ProviderKind, ScreenObservation, Settings } from '../../shared/types';
+import type { Activity, ProviderKind, RemarkStyle, ScreenObservation, Settings } from '../../shared/types';
 import { OpenAIProvider } from './OpenAIProvider';
 import { OllamaProvider } from './OllamaProvider';
 import { getOpenAIKey } from '../keys';
@@ -22,6 +23,14 @@ export interface ProviderReadiness {
 export interface AnalyzeOptions {
   /** True after ~1am local time while still active — nudge toward rest. */
   lateNight?: boolean;
+  /** Model-written 'realistic' remarks or enum-only 'classic' (the strict default). */
+  remarkStyle?: RemarkStyle;
+  /** Realistic only: recent raw remarks for continuity/no-repeats (see persona). */
+  recentRemarks?: readonly string[];
+  /** Realistic only: hours the current same-activity run has lasted. */
+  sessionHours?: number;
+  /** The activity of that run, for phrasing the nudge. */
+  sessionActivity?: Activity;
   /** Caller-supplied cancellation (e.g. on pause/quit). Merged with the
    *  provider's own timeout signal. */
   signal?: AbortSignal;

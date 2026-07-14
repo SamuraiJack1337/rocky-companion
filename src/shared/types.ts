@@ -113,7 +113,23 @@ export interface ScreenObservation {
   sensitive: boolean;
   /** Coarse category flavor; 'none' whenever uncertain or sensitive. */
   detail: ActivityDetail;
+  /**
+   * Realistic-mode only: Rocky's line written by the vision model about what
+   * is actually on screen. Absent in classic mode and always stripped when
+   * sensitive is true. Sanitized (one line, length-clamped) at parse time.
+   */
+  remark?: string;
 }
+
+/**
+ * How Rocky's screenshot remarks are produced.
+ * - 'realistic': the vision model writes Rocky's line directly about what it
+ *   sees, so remarks reference the actual screen content. More alive; screen
+ *   specifics may appear in the spoken/displayed line.
+ * - 'classic': the vision model returns only privacy-safe enums and the line
+ *   comes from Rocky's built-in template pool. Strictest privacy.
+ */
+export type RemarkStyle = 'realistic' | 'classic';
 
 /** Which AI backend analyzes the screenshot. Local is the private default. */
 export type ProviderKind = 'local' | 'cloud';
@@ -271,6 +287,12 @@ export type ScreenPermissionStatus =
 export interface Settings {
   /** Capture cadence in minutes. Clamped to [1, 120]. */
   intervalMinutes: number;
+  /**
+   * When true, Rocky looks exactly every intervalMinutes: no ±20% jitter and
+   * no event-driven extra glances (app switches, idle-wake). Clicking Rocky
+   * and the tray's Look now still work. Default false (natural rhythm).
+   */
+  strictInterval: boolean;
   /** Mute the procedural tone-voice. */
   muted: boolean;
   /** Selected vision backend. Defaults to the private, on-device 'local'. */
@@ -281,6 +303,8 @@ export interface Settings {
   ollamaHost: string;
   /** OpenAI vision model name (cloud). gpt-4o is retired — use GPT-5.x. */
   openaiModel: string;
+  /** How Rocky's remarks are written: model-written 'realistic' or templated 'classic'. */
+  remarkStyle: RemarkStyle;
   /** Voice mode: 'procedural' musical tones (private) or 'openai' spoken TTS. */
   voiceMode: VoiceMode;
   /** OpenAI TTS voice preset (one of TTS_VOICES). */
@@ -339,11 +363,13 @@ export const INTERVAL_PRESETS: readonly number[] = [1, 5, 15, 30, 60, 120];
 
 export const DEFAULT_SETTINGS: Settings = {
   intervalMinutes: 15,
+  strictInterval: false,
   muted: false,
   provider: 'local',
   ollamaModel: 'llama3.2-vision',
   ollamaHost: 'http://localhost:11434',
   openaiModel: 'gpt-5.4-mini',
+  remarkStyle: 'realistic',
   voiceMode: 'procedural',
   ttsVoice: 'echo',
   ttsModel: 'tts-1',

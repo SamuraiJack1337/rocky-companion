@@ -6,7 +6,7 @@
 // never written to disk or logged. Errors are kept generic and in-character.
 
 import type { OllamaStatus, ProviderKind, ScreenObservation } from '../../shared/types';
-import { SYSTEM_PROMPT, buildUserPrompt, parseObservation } from '../../shared/persona';
+import { buildSystemPrompt, buildUserPrompt, parseObservation, promptOptions } from '../../shared/persona';
 import type { AnalyzeOptions, ProviderReadiness, VisionProvider } from './VisionProvider';
 
 /** How long to wait on a single analyze() before giving up (ms). */
@@ -98,6 +98,7 @@ export class OllamaProvider implements VisionProvider {
   async analyze(imageBase64: string, _mime: string, opts?: AnalyzeOptions): Promise<ScreenObservation> {
     // Ollama takes raw base64 images in the `images` array; the mime type is
     // inferred by the server, so _mime is unused here.
+    const style = opts?.remarkStyle ?? 'classic';
     const { signal, cleanup } = withTimeout(ANALYZE_TIMEOUT_MS, opts?.signal);
     try {
       const res = await fetch(`${this.host}/api/chat`, {
@@ -109,10 +110,10 @@ export class OllamaProvider implements VisionProvider {
           format: 'json',
           options: { temperature: 0.6 },
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: buildSystemPrompt(style) },
             {
               role: 'user',
-              content: buildUserPrompt({ lateNight: opts?.lateNight }),
+              content: buildUserPrompt(promptOptions(style, opts)),
               images: [imageBase64],
             },
           ],
@@ -127,7 +128,7 @@ export class OllamaProvider implements VisionProvider {
 
       const data = (await res.json()) as ChatResponse;
       const content = data.message?.content ?? '';
-      return parseObservation(content);
+      return parseObservation(content, style);
     } catch (err) {
       // Network failure, abort/timeout, or non-OK above all collapse to one
       // friendly, in-character error. Never include the underlying detail

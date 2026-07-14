@@ -8,7 +8,7 @@
 
 import OpenAI from 'openai';
 import type { KeyResult, ProviderKind, ScreenObservation } from '../../shared/types';
-import { SYSTEM_PROMPT, buildUserPrompt, parseObservation } from '../../shared/persona';
+import { buildSystemPrompt, buildUserPrompt, parseObservation, promptOptions } from '../../shared/persona';
 import type { AnalyzeOptions, ProviderReadiness, VisionProvider } from './VisionProvider';
 
 // Error lines are {name} templates; the scheduler renders the call-name in.
@@ -37,16 +37,17 @@ export class OpenAIProvider implements VisionProvider {
     // than necessary.
     const client = new OpenAI({ apiKey: this.apiKey });
 
+    const style = opts?.remarkStyle ?? 'classic';
     try {
       const response = await client.responses.create(
         {
           model: this.model,
-          instructions: SYSTEM_PROMPT,
+          instructions: buildSystemPrompt(style),
           input: [
             {
               role: 'user',
               content: [
-                { type: 'input_text', text: buildUserPrompt({ lateNight: opts?.lateNight }) },
+                { type: 'input_text', text: buildUserPrompt(promptOptions(style, opts)) },
                 {
                   type: 'input_image',
                   // Inline data URL keeps the image in-memory only; no upload to disk.
@@ -64,7 +65,7 @@ export class OpenAIProvider implements VisionProvider {
       );
 
       const text = response.output_text ?? '';
-      return parseObservation(text);
+      return parseObservation(text, style);
     } catch (err) {
       // Collapse any SDK/network/HTTP error into one generic in-character line.
       // We deliberately do NOT include `err` (could contain the key or URL).

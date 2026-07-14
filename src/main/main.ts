@@ -9,7 +9,7 @@
 // Rocky is a menu-bar / floating companion: no Dock icon, and closing windows
 // does not quit the app (only the tray's Quit does).
 
-import { app, Tray, Menu, nativeImage, shell } from 'electron';
+import { app, Tray, Menu, nativeImage, powerMonitor, shell } from 'electron';
 import { EV } from '../shared/ipc';
 import type { UpdatePrompt } from '../shared/ipc';
 import type { RockyReply, Settings } from '../shared/types';
@@ -80,14 +80,21 @@ function recordObservation(observation: ScreenObservation): ObservationOutcome {
   const insight = sessionTracker.record(observation.activity);
   const milestone = detectMilestones(before, after)[0];
   const name = store.get().callName;
-  return {
-    relationshipStage: after.relationshipStage,
-    specialReply: milestone
-      ? composeMilestoneReply(milestone, name)
-      : insight
-        ? composeSessionReply(insight.activity, insight.hours, name)
-        : null,
-  };
+  if (milestone) {
+    return {
+      relationshipStage: after.relationshipStage,
+      specialReply: composeMilestoneReply(milestone, name),
+      specialKind: 'milestone',
+    };
+  }
+  if (insight) {
+    return {
+      relationshipStage: after.relationshipStage,
+      specialReply: composeSessionReply(insight.activity, insight.hours, name),
+      specialKind: 'session',
+    };
+  }
+  return { relationshipStage: after.relationshipStage, specialReply: null };
 }
 
 /** Record a fist bump; a crossed milestone upgrades the usual celebration. */
@@ -129,6 +136,8 @@ const scheduler = new Scheduler({
   isFocusActive: () => focus.isActive(),
   getActiveAppName: () => getFrontmostAppName(),
   recordObservation,
+  getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+  peekSession: () => sessionTracker.peek(),
 });
 
 function greet(): void {
@@ -213,7 +222,9 @@ function farewellAndQuit(): void {
 function applySettings(patch: Partial<Settings>): Settings {
   const s = store.set(patch);
 
-  if (patch.intervalMinutes !== undefined) scheduler.setIntervalMinutes(s.intervalMinutes);
+  if (patch.intervalMinutes !== undefined || patch.strictInterval !== undefined) {
+    scheduler.setIntervalMinutes(s.intervalMinutes);
+  }
   if (patch.paused !== undefined) (s.paused ? scheduler.pause() : scheduler.resume());
   if (patch.clickThrough !== undefined) setCompanionClickThrough(s.clickThrough);
   if (

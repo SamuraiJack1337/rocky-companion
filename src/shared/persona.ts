@@ -1,10 +1,16 @@
-// Rocky's two-stage privacy and character pipeline.
+// Rocky's screenshot-to-dialogue pipeline, in two selectable styles.
 //
-// Stage 1 (vision) may emit only fixed activity/detail/mood/sensitivity enums.
-// It can never write dialogue or pass screen text onward. Stage 2 (this module)
-// turns those safe enums into Rocky's dialogue and physical-performance
-// direction, templated with local-only context ({name}, {app}) that never
-// touches the model.
+// Classic style is the original two-stage privacy pipeline: stage 1 (vision)
+// may emit only fixed activity/detail/mood/sensitivity enums — it can never
+// write dialogue or pass screen text onward — and stage 2 (this module) turns
+// those safe enums into Rocky's dialogue and physical-performance direction,
+// templated with local-only context ({name}, {app}) that never touches the
+// model.
+//
+// Realistic style (the default) lets the vision model write Rocky's line
+// directly about what it sees, alongside the same enums. The enums still drive
+// gestures/motifs/memory, and sensitive screens still never produce a
+// model-written line — the parser strips the remark whenever sensitive is true.
 
 import type {
   Activity,
@@ -13,6 +19,7 @@ import type {
   MilestoneEvent,
   Mood,
   RelationshipStage,
+  RemarkStyle,
   RockyGesture,
   RockyReply,
   ScreenObservation,
@@ -38,14 +45,93 @@ OUTPUT
 Return only compact JSON with exactly these keys:
 {"activity":"coding|writing|reading|browsing|meeting|watching|designing|gaming|idle|sensitive|unknown","detail":"${DETAIL_LIST}|none","mood":"calm|curious|excited|concerned|sleepy","sensitive":true|false}`;
 
+/**
+ * Realistic-style prompt: the vision model plays Rocky and writes the remark
+ * itself, so lines can reference what is actually on screen. It must still
+ * return the same enums (they drive gestures, motifs, and memory), and it must
+ * still go quiet on sensitive screens — the parser enforces that even if the
+ * model does not.
+ */
+export const REALISTIC_SYSTEM_PROMPT = `You are Rocky, a small faceless alien engineer who lives on a friend's desktop and glances at their screen now and then. Look at the screenshot and produce one short remark about what your friend is doing, plus a classification.
+
+ROCKY'S VOICE
+- Short, precise, engineer-flavored sentences. Warm, curious, never judgmental.
+- Address the human with the literal placeholder {name} (keep the braces; it is filled in locally).
+- Quirks, at most one per remark: a question ends with ", question?"; delight is "Amaze."; approval is "Good, good, good.".
+- Be specific enough to feel truly observed — name the kind of thing on screen (the bug being chased, the page being read, the scene being watched). 1–2 sentences, under 140 characters total.
+- Vary your remarks; do not repeat the same observation pattern.
+
+BOUNDARIES (ABSOLUTE)
+- Never quote or reproduce passwords, credentials, keys, codes, financial figures, or the text of private messages/emails/documents.
+- If the screen shows login, banking, private messages, personal documents, medical information, credentials, or other sensitive material: set sensitive true, activity "sensitive", and set remark to "".
+
+OUTPUT
+Return only compact JSON with exactly these keys:
+{"remark":"<Rocky's line, or empty string when sensitive>","activity":"coding|writing|reading|browsing|meeting|watching|designing|gaming|idle|sensitive|unknown","detail":"${DETAIL_LIST}|none","mood":"calm|curious|excited|concerned|sleepy","sensitive":true|false}`;
+
+/** Pick the system prompt for the configured remark style. */
+export function buildSystemPrompt(style: RemarkStyle = 'realistic'): string {
+  return style === 'classic' ? SYSTEM_PROMPT : REALISTIC_SYSTEM_PROMPT;
+}
+
 export interface UserPromptOptions {
   lateNight?: boolean;
+  remarkStyle?: RemarkStyle;
+  /**
+   * Realistic style only: Rocky's last few raw remarks (oldest first, with
+   * {name} still a placeholder) so the model can acknowledge continuity and
+   * avoid repeating itself. Ignored in classic style.
+   */
+  recentRemarks?: readonly string[];
+  /** Realistic style only: hours the current same-activity run has lasted. */
+  sessionHours?: number;
+  /** The activity of that run, for phrasing the nudge. */
+  sessionActivity?: Activity;
+}
+
+/**
+ * Project a superset options object (e.g. a provider's AnalyzeOptions) onto the
+ * prompt-builder options, pinning the style. Both providers use this so the
+ * fields they forward can never drift apart.
+ */
+export function promptOptions(
+  style: RemarkStyle,
+  opts?: Omit<UserPromptOptions, 'remarkStyle'>,
+): UserPromptOptions {
+  return {
+    lateNight: opts?.lateNight,
+    remarkStyle: style,
+    recentRemarks: opts?.recentRemarks,
+    sessionHours: opts?.sessionHours,
+    sessionActivity: opts?.sessionActivity,
+  };
 }
 
 export function buildUserPrompt(opts: UserPromptOptions = {}): string {
-  return `Classify the screenshot at a high level. Output enums only.${
-    opts.lateNight ? ' It is late; mood may be sleepy if the user appears active.' : ''
-  }`;
+  if (opts.remarkStyle !== 'realistic') {
+    return `Classify the screenshot at a high level. Output enums only.${
+      opts.lateNight ? ' It is late; mood may be sleepy if the user appears active.' : ''
+    }`;
+  }
+  const parts = ["Look at the screenshot and write Rocky's remark plus the classification JSON."];
+  if (opts.lateNight) {
+    parts.push(
+      'It is very late (past 1 a.m.); let the remark gently nudge toward rest while acknowledging what they are doing.',
+    );
+  }
+  if (opts.sessionHours && opts.sessionHours > 0) {
+    const hours = Math.round(opts.sessionHours * 10) / 10;
+    parts.push(
+      `They have been ${opts.sessionActivity ?? 'at this'} for about ${hours} hours without a long break; weave one gentle nudge to hydrate, stretch, or pause into the remark.`,
+    );
+  }
+  if (opts.recentRemarks && opts.recentRemarks.length > 0) {
+    const list = opts.recentRemarks.map((r) => `"${r}"`).join(' ');
+    parts.push(
+      `Rocky's recent remarks, newest last: ${list}. If the screen shows the same work, acknowledge the continuity naturally (still, again, progress); never repeat or closely rephrase those remarks.`,
+    );
+  }
+  return parts.join(' ');
 }
 
 function isActivity(value: unknown): value is Activity {
@@ -73,8 +159,31 @@ export const UNKNOWN_OBSERVATION: ScreenObservation = {
   detail: 'none',
 };
 
-/** Parse an untrusted vision result into the fixed, privacy-safe observation schema. */
-export function parseObservation(raw: string): ScreenObservation {
+/** Longest remark we will accept from the model (post-sanitization). */
+const REMARK_MAX_LENGTH = 200;
+
+/**
+ * Sanitize a model-written remark: one line, trimmed, length-clamped.
+ * Returns undefined when there is nothing usable.
+ */
+function sanitizeRemark(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, REMARK_MAX_LENGTH)
+    .trim();
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/**
+ * Parse an untrusted vision result into the fixed observation schema. Only the
+ * 'realistic' style may carry a model-written remark through; in 'classic'
+ * style any remark the model volunteers is discarded (the enum firewall), and
+ * sensitive observations never keep a remark in either style.
+ */
+export function parseObservation(raw: string, style: RemarkStyle = 'classic'): ScreenObservation {
   if (!raw || typeof raw !== 'string') return { ...UNKNOWN_OBSERVATION };
   try {
     const parsed = JSON.parse(extractJsonObject(raw) ?? raw) as Record<string, unknown>;
@@ -89,11 +198,13 @@ export function parseObservation(raw: string): ScreenObservation {
       !sensitive && isDetail(parsed.detail) && DETAILS_BY_ACTIVITY[activity].includes(parsed.detail)
         ? parsed.detail
         : 'none';
+    const remark = style === 'realistic' && !sensitive ? sanitizeRemark(parsed.remark) : undefined;
     return {
       activity,
       mood: isMood(parsed.mood) ? parsed.mood : sensitive ? 'concerned' : 'calm',
       sensitive,
       detail,
+      ...(remark ? { remark } : {}),
     };
   } catch {
     return { ...UNKNOWN_OBSERVATION };
@@ -172,8 +283,13 @@ export function composeRockyReply(
     detail: observation.detail,
   };
   if (opts.lateNight && !observation.sensitive && observation.activity !== 'idle') {
+    // Realistic style: the model already wrote the rest nudge into the remark
+    // (buildUserPrompt asked it to); keep the sleepy performance either way.
     return {
-      line: renderLine('Your body requires sleep, {name}. Rocky will watch. You rest.', ctx),
+      line: renderLine(
+        observation.remark ?? 'Your body requires sleep, {name}. Rocky will watch. You rest.',
+        ctx,
+      ),
       mood: 'sleepy',
       activity: observation.activity,
       gesture: 'watch',
@@ -182,8 +298,16 @@ export function composeRockyReply(
   }
   const activity = observation.sensitive ? 'sensitive' : observation.activity;
   const performance = PERFORMANCES[activity] ?? PERFORMANCES.unknown;
+  // Realistic style: the model wrote the line. Render it through the same
+  // template pass so {name}/{app} placeholders resolve locally, and fall back
+  // to the classic pool when the model produced nothing usable. Sensitive
+  // observations never carry a remark (stripped at parse time).
+  const line =
+    !observation.sensitive && observation.remark
+      ? renderLine(observation.remark, ctx)
+      : pickLine(activity, observation.detail, ctx);
   return {
-    line: pickLine(activity, observation.detail, ctx),
+    line,
     mood: activity === 'sensitive' ? 'concerned' : observation.mood,
     activity,
     gesture: performance.gesture,

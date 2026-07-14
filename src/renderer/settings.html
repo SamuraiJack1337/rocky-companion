@@ -388,6 +388,34 @@
       <h2>Behavior</h2>
 
       <div class="field">
+        <label class="block">How Rocky comments on your screen</label>
+        <div class="radio-group" id="remark-style-group">
+          <label class="radio-card" id="remark-realistic-card">
+            <span class="inline" style="gap: 9px">
+              <input type="radio" name="remark-style" id="remark-realistic" value="realistic" />
+              <span class="title">Realistic</span>
+            </span>
+            <span class="tag">Rocky reacts to what he actually sees</span>
+          </label>
+          <label class="radio-card" id="remark-classic-card">
+            <span class="inline" style="gap: 9px">
+              <input type="radio" name="remark-style" id="remark-classic" value="classic" />
+              <span class="title">Classic</span>
+            </span>
+            <span class="tag">scripted lines, strictest privacy</span>
+          </label>
+        </div>
+        <div class="hint">
+          <strong>Realistic</strong> lets the vision model write Rocky's remark about the actual
+          screen content, so lines feel observed rather than scripted — screen specifics may
+          appear in the bubble (and in the spoken line if cloud voice is on).
+          <strong>Classic</strong> keeps the strict privacy pipeline: the model returns only
+          coarse categories and Rocky speaks from his built-in script. In both modes, screens
+          judged sensitive get no specific remark.
+        </div>
+      </div>
+
+      <div class="field">
         <label class="block" for="call-name">What Rocky calls you</label>
         <input
           type="text"
@@ -406,6 +434,23 @@
           <input type="range" id="interval-range" min="1" max="120" step="1" />
           <input type="number" id="interval" min="1" max="120" step="1" />
           <span class="unit">min</span>
+        </div>
+        <div class="hint">
+          By default this is approximate, on purpose: each gap varies by ±20%, and Rocky takes
+          an occasional extra glance when you settle into a different app or come back from a
+          break (detected locally from the frontmost app name and system idle time — nothing
+          extra is captured or sent). You can also click Rocky himself for a look right now.
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="strict-interval" />
+          <span>Strict clockwork interval</span>
+        </label>
+        <div class="hint">
+          Rocky looks exactly every N minutes — no variation, no extra glances on app switches
+          or breaks. Clicking Rocky and “Look now” still work.
         </div>
       </div>
 

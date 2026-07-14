@@ -68,6 +68,19 @@ export class SessionTracker {
     return null;
   }
 
+  /**
+   * Read the current run without recording anything: which activity, and how
+   * long it has lasted so far. Used to give the realistic remark prompt session
+   * context BEFORE the vision call (record() only runs after it). Returns null
+   * when there is no live run or it has gone stale.
+   */
+  peek(now: Date = new Date()): { activity: Activity; hours: number } | null {
+    if (!this.runActivity) return null;
+    const nowMs = now.getTime();
+    if (nowMs - this.lastSeenMs > STALE_GAP_MS) return null;
+    return { activity: this.runActivity, hours: (nowMs - this.runStartMs) / 3_600_000 };
+  }
+
   private startRun(activity: Activity, nowMs: number): void {
     this.runActivity = activity;
     this.runStartMs = nowMs;
