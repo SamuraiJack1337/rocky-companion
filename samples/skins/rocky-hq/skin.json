@@ -8,6 +8,7 @@
     "curious": { "files": ["curious-1.png", "curious-2.png"], "fps": 2 },
     "concerned": { "files": ["concerned-1.png", "concerned-1b.png", "concerned-2.png"], "fps": 2 },
     "sleep": { "files": ["sleep-1.png", "sleep-2.png"], "fps": 1 },
-    "greet": { "files": ["greet-1.png", "greet-2.png"], "fps": 3 }
+    "greet": { "files": ["greet-1.png", "greet-2.png"], "fps": 3 },
+    "fistBump": { "files": ["greet-1.png", "greet-2.png"], "fps": 3 }
   }
 }

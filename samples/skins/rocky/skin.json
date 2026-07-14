@@ -48,6 +48,13 @@
         "greet-2.png"
       ],
       "fps": 4
+    },
+    "fistBump": {
+      "files": [
+        "greet-1.png",
+        "greet-2.png"
+      ],
+      "fps": 4
     }
   }
 }
