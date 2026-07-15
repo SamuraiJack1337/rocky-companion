@@ -23,7 +23,7 @@ const WATCH = process.argv.includes('--watch');
 
 const OUT = path.join(__dirname, 'dist');
 const RENDERER_OUT = path.join(OUT, 'renderer');
-const STATIC = ['index.html', 'consent.html', 'settings.html', 'lab.html', 'styles.css'];
+const STATIC = ['index.html', 'consent.html', 'settings.html', 'lab.html', 'chat.html', 'styles.css'];
 
 /** Copy renderer static assets (HTML/CSS) into dist/renderer. */
 function copyStatic() {
@@ -66,6 +66,7 @@ const rendererConfig = {
     settings: path.join(__dirname, 'src', 'renderer', 'settings.ts'),
     consent: path.join(__dirname, 'src', 'renderer', 'consent.ts'),
     lab: path.join(__dirname, 'src', 'renderer', 'lab.ts'),
+    chat: path.join(__dirname, 'src', 'renderer', 'chat.ts'),
   },
   outdir: RENDERER_OUT,
 };

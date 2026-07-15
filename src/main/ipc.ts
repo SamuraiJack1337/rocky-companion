@@ -8,19 +8,36 @@
 import { app, ipcMain, BrowserWindow } from 'electron';
 import { CH } from '../shared/ipc';
 import type { ConsentPayload } from '../shared/ipc';
-import type { EngineeringRequest, RockyReply, Settings } from '../shared/types';
+import type {
+  ChatMessage,
+  EngineeringRequest,
+  NoteView,
+  ReflectionKind,
+  RockyReply,
+  Settings,
+} from '../shared/types';
 import { store } from './store';
 import { hasOpenAIKey, setOpenAIKey, deleteOpenAIKey } from './keys';
-import { getScreenPermission, openScreenSettings } from './permissions';
+import {
+  getMicPermission,
+  getScreenPermission,
+  openScreenSettings,
+  requestMicPermission,
+} from './permissions';
 import { probeOllama, validateOpenAIKey } from './providers/VisionProvider';
+import { createSpeechProvider } from './providers/SpeechProvider';
 import { synthesizeSpeech } from './tts';
 import { listSkins, loadSkin, openSkinsFolder } from './assets';
-import { showLabWindow, showSettingsWindow } from './windows';
+import { showChatWindow, showLabWindow, showSettingsWindow } from './windows';
 import type { TtsOverrides } from '../shared/ipc';
 import type { Scheduler } from './scheduler';
 import type { FocusManager } from './focus';
 import { memory } from './memory';
+import { notes } from './notes';
 import { solveEngineering } from './engineering';
+import { chatWithRocky, reflectOnNotes } from './chat';
+import type { VoiceNotesController } from './voiceNotes';
+import { embedTexts } from './embeddings';
 import {
   calculationReply,
   focusCancelledReply,
@@ -43,6 +60,10 @@ export interface IpcDeps {
   openUpdate: () => void;
   dismissUpdate: () => void;
   farewellAndQuit: () => void;
+  /** Push-to-talk orchestration (defined in main.ts, one instance). */
+  voiceNotes: VoiceNotesController;
+  /** A note was saved from any surface — broadcast so notebooks refresh. */
+  broadcastNoteSaved: (note: NoteView) => void;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -143,6 +164,51 @@ export function registerIpc(deps: IpcDeps): void {
   });
   ipcMain.handle(CH.UPDATE_OPEN, () => deps.openUpdate());
   ipcMain.handle(CH.UPDATE_DISMISS, () => deps.dismissUpdate());
+
+  // ── notes + voice input (Stage 1) ─────────────────────────────────────────
+  ipcMain.handle(CH.MIC_PERMISSION_CHECK, () => getMicPermission());
+  ipcMain.handle(CH.MIC_PERMISSION_REQUEST, () => requestMicPermission());
+  ipcMain.handle(CH.SPEECH_SETUP_CHECK, async () => {
+    const s = store.get();
+    const provider = createSpeechProvider(s);
+    const readiness = await provider.ready();
+    return { ok: readiness.ok, provider: provider.kind, error: readiness.error };
+  });
+  ipcMain.handle(CH.PTT_TOGGLE, () => deps.voiceNotes.toggle());
+  ipcMain.handle(CH.VOICE_NOTE_SUBMIT, (_e, wavBase64: string) =>
+    deps.voiceNotes.submit(typeof wavBase64 === 'string' ? wavBase64 : ''),
+  );
+  ipcMain.on(CH.VOICE_NOTE_CANCEL, (_e, reason?: string) =>
+    deps.voiceNotes.cancel(typeof reason === 'string' ? reason : undefined),
+  );
+  ipcMain.handle(CH.VOICE_TRANSCRIBE, (_e, wavBase64: string) =>
+    deps.voiceNotes.transcribe(typeof wavBase64 === 'string' ? wavBase64 : ''),
+  );
+  ipcMain.handle(CH.NOTES_LIST, () => notes.list());
+  ipcMain.handle(CH.NOTES_ADD, (_e, text: string) => {
+    const note = notes.add(typeof text === 'string' ? text : '', 'chat');
+    if (!note) return { ok: false, error: 'Nothing to keep.' };
+    deps.broadcastNoteSaved(note);
+    // Embed in the background; retrieval falls back to keywords until then.
+    void embedTexts([note.text], store.get()).then((batch) => {
+      if (batch) notes.setEmbedding(note.id, batch.vectors[0], batch.model);
+    });
+    return { ok: true, note };
+  });
+  ipcMain.handle(CH.NOTES_DELETE, (_e, id: string) => {
+    if (typeof id === 'string') notes.delete(id);
+  });
+  ipcMain.handle(CH.NOTES_CLEAR, () => notes.clear());
+  ipcMain.handle(CH.CHAT_SEND, (_e, messages: ChatMessage[]) =>
+    chatWithRocky(Array.isArray(messages) ? messages : [], store.get()),
+  );
+  ipcMain.handle(CH.CHAT_REFLECT, (_e, kind: ReflectionKind) =>
+    reflectOnNotes(kind, store.get()),
+  );
+  ipcMain.handle(CH.OPEN_CHAT, () => {
+    showChatWindow();
+  });
+
   ipcMain.handle(CH.QUIT, () => {
     // Imported lazily to avoid a cycle; app is always available at runtime.
     deps.farewellAndQuit();

@@ -19,6 +19,7 @@ let companion: BrowserWindow | null = null;
 let consent: BrowserWindow | null = null;
 let settings: BrowserWindow | null = null;
 let lab: BrowserWindow | null = null;
+let chat: BrowserWindow | null = null;
 let savePositionTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Default bottom-right position on the primary display's work area. */
@@ -204,6 +205,29 @@ export function showLabWindow(): BrowserWindow {
   lab.loadFile(path.join(RENDERER_DIR, 'lab.html'));
   lab.on('closed', () => { lab = null; });
   return lab;
+}
+
+export function showChatWindow(): BrowserWindow {
+  if (chat && !chat.isDestroyed()) {
+    chat.focus();
+    return chat;
+  }
+  chat = new BrowserWindow({
+    width: 620,
+    height: 760,
+    minWidth: 480,
+    minHeight: 560,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    fullscreenable: false,
+    title: 'Rocky Notes',
+    backgroundColor: '#12151c',
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  chat.loadFile(path.join(RENDERER_DIR, 'chat.html'));
+  chat.on('closed', () => { chat = null; });
+  return chat;
 }
 
 /** Send a push event to the companion window only. */

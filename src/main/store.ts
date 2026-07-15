@@ -33,6 +33,13 @@ function normalizeCallName(value: unknown): string {
   return cleaned || DEFAULT_SETTINGS.callName;
 }
 
+/** Trim a free-text settings field to a cap; non-strings fall back. */
+function normalizeShortField(value: unknown, fallback: string, max: number): string {
+  if (typeof value !== 'string') return fallback;
+  const cleaned = value.replace(/[\r\n\t]/g, ' ').trim().slice(0, max).trim();
+  return cleaned || fallback;
+}
+
 function normalizeBlockedApps(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -146,6 +153,38 @@ class SettingsStore {
     if (merged.provider === 'cloud' && !merged.cloudConsentGiven) {
       merged.provider = 'local';
     }
+    // Same invariant for the speech backend: note audio may only go to the
+    // cloud with the separate notes-cloud consent. (The SpeechProvider factory
+    // re-checks this; store-level coercion is defense-in-depth, as above.)
+    if (merged.speechProvider !== 'local' && merged.speechProvider !== 'cloud') {
+      merged.speechProvider = DEFAULT_SETTINGS.speechProvider;
+    }
+    if (merged.speechProvider === 'cloud' && !merged.notesCloudConsentGiven) {
+      merged.speechProvider = 'local';
+    }
+    merged.pushToTalkShortcut = normalizeShortField(
+      merged.pushToTalkShortcut,
+      DEFAULT_SETTINGS.pushToTalkShortcut,
+      64,
+    );
+    merged.whisperCliPath = normalizeShortField(
+      merged.whisperCliPath,
+      DEFAULT_SETTINGS.whisperCliPath,
+      512,
+    );
+    merged.whisperModelPath = normalizeShortField(merged.whisperModelPath, '', 512);
+    merged.sttModel = normalizeShortField(merged.sttModel, DEFAULT_SETTINGS.sttModel, 64);
+    merged.ollamaChatModel = normalizeShortField(merged.ollamaChatModel, '', 64);
+    merged.ollamaEmbedModel = normalizeShortField(
+      merged.ollamaEmbedModel,
+      DEFAULT_SETTINGS.ollamaEmbedModel,
+      64,
+    );
+    merged.openaiEmbedModel = normalizeShortField(
+      merged.openaiEmbedModel,
+      DEFAULT_SETTINGS.openaiEmbedModel,
+      64,
+    );
     return merged;
   }
 

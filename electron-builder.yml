@@ -37,6 +37,12 @@ mac:
       Rocky periodically takes a screenshot so he can understand, at a high
       level, what you are doing and react in character. Images are never saved
       to disk. You can pause Rocky at any time.
+    # Microphone: push-to-talk voice notes only. The mic is live only between
+    # your two presses of the talk key; audio is transcribed and discarded.
+    NSMicrophoneUsageDescription: >-
+      Rocky listens only while you hold a voice note (press the talk key to
+      start and stop). The recording is transcribed into your local notebook
+      and the audio is then discarded — it is never stored.
     # Hide from the Dock — Rocky lives in the menu bar and floats on screen.
     LSUIElement: true
 

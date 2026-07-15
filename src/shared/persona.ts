@@ -380,6 +380,59 @@ export function farewellReply(name?: string): RockyReply {
   );
 }
 
+// ── Voice notes (Stage 1: push-to-talk thoughts) ─────────────────────────────
+
+/** Push-to-talk began: Rocky raises his receivers and waits. */
+export function listeningReply(name?: string): RockyReply {
+  return ritual(
+    renderLine('Rocky listens, {name}. Speak the thought. Press again when done.', { name }),
+    'curious',
+    'listen',
+    'question',
+  );
+}
+
+/** Clamp a transcript into a short quoted snippet for the confirmation line. */
+export function noteSnippet(text: string, max = 60): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  return clean.length <= max ? clean : `${clean.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** A voice note was transcribed and stored. Echo a snippet so mishearings show. */
+export function noteSavedReply(snippet: string, name?: string): RockyReply {
+  return ritual(
+    renderLine(`Noted, {name}: “${snippet}”. Rocky keeps it.`, { name }),
+    'excited',
+    'build',
+    'complete',
+  );
+}
+
+/** The capture produced no usable words. */
+export function noteEmptyReply(name?: string): RockyReply {
+  return ritual(
+    renderLine('Rocky heard only air, {name}. Try again, question?', { name }),
+    'curious',
+    'listen',
+    'question',
+  );
+}
+
+/** A transcription/setup failure line (already a {name} template) as a reply. */
+export function voiceTroubleReply(errorLine: string, name?: string): RockyReply {
+  return ritual(renderLine(errorLine, { name }), 'concerned', 'protect', 'concern');
+}
+
+/** Microphone permission is missing. */
+export function micDeniedReply(name?: string): RockyReply {
+  return ritual(
+    renderLine('Rocky has no ears yet, {name}. Grant Microphone in System Settings.', { name }),
+    'concerned',
+    'protect',
+    'concern',
+  );
+}
+
 // ── Session awareness ────────────────────────────────────────────────────────
 
 const SESSION_LINES: Record<number, string> = {

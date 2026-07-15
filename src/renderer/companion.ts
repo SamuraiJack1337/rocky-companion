@@ -26,6 +26,7 @@ import { SpeechBubble } from './speechBubble';
 import { SpriteSkin } from './skins';
 import type { CreatureMode, CreatureRenderer } from './skins';
 import { installControls } from './controls';
+import { VoiceRecorder } from './recorder';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -809,6 +810,8 @@ class Companion {
   private readonly bubble: SpeechBubble;
   private readonly tone = new ToneVoice();
   private readonly spoken = new SpokenVoice();
+  /** Push-to-talk microphone capture (started/stopped by main via EV.PTT). */
+  private readonly recorder = new VoiceRecorder();
 
   private muted = false;
   private paused = false;
@@ -1035,6 +1038,10 @@ class Companion {
       void this.applySkin(s.creatureSkin);
     });
 
+    // Push-to-talk: main drives the recorder lifecycle; the audio itself never
+    // leaves this renderer except as the in-memory WAV handed back to main.
+    window.rocky.onPtt((cmd) => void this.handlePtt(cmd.phase));
+
     // A newer release exists: Rocky offers it with Fetch / Later buttons.
     window.rocky.onUpdateAvailable((update) => {
       this.pendingRestMode = 'curious';
@@ -1046,6 +1053,38 @@ class Companion {
         { label: 'Later', onClick: () => void window.rocky.dismissUpdate() },
       ]);
     });
+  }
+
+  /** Drive the push-to-talk recorder on main's command. */
+  private async handlePtt(phase: 'start' | 'stop' | 'cancel'): Promise<void> {
+    if (phase === 'start') {
+      try {
+        await this.recorder.start();
+        // Hold the listening posture while the mic is live.
+        this.currentGesture = 'listen';
+        this.active.setGesture(this.currentGesture);
+        this.active.setMode('curious');
+      } catch {
+        // Mic denied/unavailable at the OS level — tell main to reset.
+        window.rocky.cancelVoiceNote('mic-failed');
+      }
+      return;
+    }
+    if (phase === 'cancel') {
+      this.recorder.cancel();
+      return;
+    }
+    // stop → hand the audio to main (transcribe + save happen there).
+    try {
+      const wav = await this.recorder.stop();
+      if (!wav) {
+        window.rocky.cancelVoiceNote('no-audio');
+        return;
+      }
+      await window.rocky.submitVoiceNote(wav);
+    } catch {
+      window.rocky.cancelVoiceNote('capture-failed');
+    }
   }
 
   /** Handle an incoming reply: animate, show the bubble, and voice the line. */

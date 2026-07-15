@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rocky Notes</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #12151c;
+        --panel: #191e28;
+        --panel-2: #212837;
+        --border: #35405a;
+        --text: #e9ecf2;
+        --muted: #98a2b8;
+        --accent: #8fb7e8;
+        --accent-deep: #24405f;
+        --green: #84d6a1;
+        --danger: #ef8e84;
+        --radius: 12px;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background:
+          radial-gradient(circle at 15% 0%, rgba(143, 183, 232, 0.08), transparent 34%),
+          var(--bg);
+        color: var(--text);
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        flex-direction: column;
+        padding: 16px 16px 0;
+      }
+
+      header { margin: 0 0 10px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+      h1 { font-size: 18px; line-height: 1.2; margin: 0; letter-spacing: 0.01em; }
+      .subtitle { color: var(--muted); margin: 0; font-size: 11.5px; text-align: right; }
+
+      .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+      .tab {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        padding: 7px 14px;
+      }
+      .tab[aria-selected="true"] { background: var(--accent-deep); border-color: var(--accent); }
+      .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      .panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+      .panel[hidden] { display: none; }
+
+      /* ── Talk ─────────────────────────────────────────────────────────── */
+      #chat-log {
+        background: rgba(25, 30, 40, 0.96);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 14px;
+      }
+      .msg { display: flex; margin-bottom: 10px; }
+      .msg .bubble {
+        border-radius: 12px;
+        max-width: 86%;
+        padding: 8px 11px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .msg.user { justify-content: flex-end; }
+      .msg.user .bubble { background: var(--accent-deep); border: 1px solid var(--border); }
+      .msg.rocky .bubble { background: var(--panel-2); border: 1px solid var(--border); }
+      .msg.error .bubble { border-color: var(--danger); color: var(--danger); }
+      .msg .meta { color: var(--muted); font-size: 10px; margin-top: 4px; }
+      .empty-log { color: var(--muted); text-align: center; padding: 26px 18px; }
+      .empty-log strong { color: var(--text); display: block; margin-bottom: 6px; }
+
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+      .chips button {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 11px;
+      }
+      .chips button:hover:not(:disabled) { border-color: var(--accent); }
+      .chips button:disabled { cursor: default; opacity: 0.45; }
+
+      .composer { display: flex; gap: 8px; align-items: flex-end; }
+      #chat-input {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        color: var(--text);
+        flex: 1;
+        font: inherit;
+        max-height: 110px;
+        min-height: 38px;
+        outline: none;
+        padding: 9px 11px;
+        resize: none;
+      }
+      #chat-input:focus { border-color: var(--accent); }
+      .composer button {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        height: 38px;
+        padding: 0 12px;
+        white-space: nowrap;
+      }
+      .composer button:hover:not(:disabled) { border-color: var(--accent); }
+      .composer button:disabled { cursor: default; opacity: 0.45; }
+      #send { background: var(--accent-deep); border-color: var(--accent); font-weight: 650; }
+      #mic { font-size: 15px; width: 42px; padding: 0; }
+      #mic.recording { background: #5a2723; border-color: var(--danger); }
+
+      /* ── Notebook ─────────────────────────────────────────────────────── */
+      #notes-list {
+        background: rgba(25, 30, 40, 0.96);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 10px;
+      }
+      .note {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel-2);
+        margin-bottom: 8px;
+        padding: 9px 11px;
+      }
+      .note .note-head { align-items: baseline; color: var(--muted); display: flex; font-size: 10.5px; gap: 8px; justify-content: space-between; margin-bottom: 4px; }
+      .note .note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .note button { background: none; border: none; color: var(--danger); cursor: pointer; font: inherit; font-size: 11px; padding: 0; }
+      .note-add { display: flex; gap: 8px; margin: 10px 0; }
+      #note-input {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        color: var(--text);
+        flex: 1;
+        font: inherit;
+        outline: none;
+        padding: 9px 11px;
+      }
+      #note-input:focus { border-color: var(--accent); }
+      .note-add button {
+        background: var(--accent-deep);
+        border: 1px solid var(--accent);
+        border-radius: 10px;
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        padding: 0 12px;
+      }
+      .notebook-foot { align-items: center; display: flex; gap: 10px; margin-bottom: 10px; }
+      .privacy-copy { color: var(--muted); flex: 1; font-size: 10.5px; }
+      #clear-notes { background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--danger); cursor: pointer; font: inherit; font-size: 11.5px; padding: 6px 10px; }
+
+      .status { color: var(--muted); font-size: 11.5px; min-height: 17px; margin: 6px 0 10px; }
+      .status.ok { color: var(--green); }
+      .status.err { color: var(--danger); }
+      .status.live { color: var(--accent); }
+
+      footer {
+        align-items: center;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        margin: 0 -16px;
+        padding: 10px 16px;
+      }
+      footer span { color: var(--muted); font-size: 11px; }
+      footer button {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        padding: 7px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Rocky Notes</h1>
+      <p class="subtitle" id="ptt-hint">Push-to-talk saves a voice note from anywhere.</p>
+    </header>
+
+    <div class="tabs" role="tablist" aria-label="Rocky Notes">
+      <button class="tab" id="talk-tab" role="tab" aria-selected="true" aria-controls="talk-panel">Talk</button>
+      <button class="tab" id="notebook-tab" role="tab" aria-selected="false" aria-controls="notebook-panel">Notebook</button>
+    </div>
+
+    <section class="panel" id="talk-panel" role="tabpanel" aria-labelledby="talk-tab">
+      <div id="chat-log" aria-live="polite"></div>
+      <div class="chips" aria-label="Reflections">
+        <button type="button" data-reflect="summarize">Summarize my notes</button>
+        <button type="button" data-reflect="connections">Find connections</button>
+        <button type="button" data-reflect="questions">Questions for me</button>
+        <button type="button" data-reflect="weekly">Weekly reflection</button>
+      </div>
+      <div class="composer">
+        <button type="button" id="mic" title="Dictate into the box" aria-label="Dictate">🎙</button>
+        <textarea id="chat-input" rows="1" maxlength="8000" placeholder="Ask about your notes, or think out loud…"></textarea>
+        <button type="button" id="save-note" title="Save the box as a note instead of sending">+ Note</button>
+        <button type="button" id="send">Send</button>
+      </div>
+      <div class="status" id="talk-status" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" id="notebook-panel" role="tabpanel" aria-labelledby="notebook-tab" hidden>
+      <div id="notes-list"></div>
+      <div class="note-add">
+        <input id="note-input" type="text" maxlength="4000" placeholder="Type a thought to keep…" />
+        <button type="button" id="add-note">Add note</button>
+      </div>
+      <div class="notebook-foot">
+        <span class="privacy-copy">Notes are yours and stay in a local file (userData/notes.json). They are only sent to a model when you talk about them — cloud only with your separate consent.</span>
+        <button type="button" id="clear-notes">Delete all</button>
+      </div>
+      <div class="status" id="notebook-status" aria-live="polite"></div>
+    </section>
+
+    <footer>
+      <span id="voice-state">Rocky is idle.</span>
+      <button type="button" id="close-chat">Close</button>
+    </footer>
+    <script src="chat.js"></script>
+  </body>
+</html>

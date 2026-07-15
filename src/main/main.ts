@@ -13,7 +13,7 @@ import { app, Tray, Menu, nativeImage, powerMonitor, shell } from 'electron';
 import { EV } from '../shared/ipc';
 import type { UpdatePrompt } from '../shared/ipc';
 import type { RockyReply, Settings } from '../shared/types';
-import { INTERVAL_PRESETS } from '../shared/types';
+import { DEFAULT_SETTINGS, INTERVAL_PRESETS } from '../shared/types';
 import { store } from './store';
 import { isScreenGranted } from './permissions';
 import { captureScreen } from './capture';
@@ -30,11 +30,13 @@ import {
   closeConsentWindow,
   showSettingsWindow,
   showLabWindow,
+  showChatWindow,
   sendToCompanion,
   broadcast,
   hideDock,
 } from './windows';
 import { registerIpc } from './ipc';
+import { VoiceNotesController } from './voiceNotes';
 import { FocusManager } from './focus';
 import { getFrontmostAppName } from './activeApp';
 import { memory } from './memory';
@@ -124,6 +126,33 @@ const focus = new FocusManager(
 let provider!: VisionProvider;
 function rebuildProvider(): void {
   provider = createProvider(store.get());
+}
+
+// Push-to-talk voice notes (Stage 1a). The controller orchestrates; the
+// companion renderer does the actual microphone capture.
+const voiceNotes = new VoiceNotesController({
+  getSettings: () => store.get(),
+  emitReply,
+  sendPtt: (cmd) => sendToCompanion(EV.PTT, cmd),
+  broadcastState: (state) => {
+    broadcast(EV.VOICE_STATE, state);
+    refreshTray();
+  },
+  broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
+  showCompanion: () => showCompanionWindow(),
+});
+
+/**
+ * (Re-)register the push-to-talk hotkey from settings. On failure (invalid or
+ * taken accelerator) fall back to the default so a hotkey always exists.
+ */
+function applyPushToTalkShortcut(): void {
+  const wanted = store.get().pushToTalkShortcut;
+  if (voiceNotes.registerShortcut(wanted)) return;
+  const fallback = DEFAULT_SETTINGS.pushToTalkShortcut;
+  if (wanted !== fallback && voiceNotes.registerShortcut(fallback)) {
+    store.set({ pushToTalkShortcut: fallback });
+  }
 }
 
 const scheduler = new Scheduler({
@@ -235,6 +264,7 @@ function applySettings(patch: Partial<Settings>): Settings {
   ) {
     rebuildProvider();
   }
+  if (patch.pushToTalkShortcut !== undefined) applyPushToTalkShortcut();
 
   broadcast(EV.SETTINGS_UPDATED, s);
   broadcast(EV.STATE, { paused: s.paused, muted: s.muted });
@@ -248,6 +278,7 @@ function onConsentComplete(): void {
   createCompanionWindow();
   const s = store.get();
   if (!s.paused) scheduler.start();
+  applyPushToTalkShortcut();
   greet();
   refreshTray();
 }
@@ -293,6 +324,18 @@ function buildTrayMenu(): Menu {
       label: 'Fist bump',
       click: () => fistBump(),
     },
+    { type: 'separator' },
+    {
+      label:
+        voiceNotes.getState() === 'recording'
+          ? 'Stop listening (saves the note)'
+          : voiceNotes.getState() === 'processing'
+            ? 'Translating your thought…'
+            : 'Talk to Rocky (voice note)',
+      enabled: voiceNotes.getState() !== 'processing',
+      click: () => void voiceNotes.toggle(),
+    },
+    { label: 'Notes & chat…', click: () => showChatWindow() },
     { type: 'separator' },
     {
       label: 'Pause',
@@ -362,6 +405,8 @@ if (!gotLock) {
       openUpdate,
       dismissUpdate,
       farewellAndQuit,
+      voiceNotes,
+      broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
     });
     updateChecker.start();
 
@@ -372,6 +417,7 @@ if (!gotLock) {
     } else {
       createCompanionWindow();
       if (!s.paused) scheduler.start();
+      applyPushToTalkShortcut();
       greet();
       maybeOfferNamePrompt();
     }
@@ -395,5 +441,6 @@ if (!gotLock) {
     }
     scheduler.dispose();
     focus.dispose();
+    voiceNotes.dispose();
   });
 }

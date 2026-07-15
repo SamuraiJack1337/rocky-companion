@@ -17,6 +17,15 @@ import type {
   EngineeringRequest,
   EngineeringResult,
   FocusState,
+  ChatMessage,
+  ChatResult,
+  MicPermissionStatus,
+  NoteView,
+  ReflectionKind,
+  SpeechSetupStatus,
+  TranscriptionResult,
+  VoiceCaptureState,
+  VoiceNoteResult,
 } from './types';
 
 /** invoke/handle channels (request → response). */
@@ -59,6 +68,25 @@ export const CH = {
   /** Manual companion-window drag (the canvas is no-drag so Rocky is clickable). */
   WINDOW_DRAG: 'window:drag',
   QUIT: 'app:quit',
+  // notes + voice input (Stage 1)
+  MIC_PERMISSION_CHECK: 'permission:check-mic',
+  MIC_PERMISSION_REQUEST: 'permission:request-mic',
+  SPEECH_SETUP_CHECK: 'speech:check-setup',
+  /** Toggle push-to-talk (same action as the global shortcut). */
+  PTT_TOGGLE: 'voice:ptt-toggle',
+  /** Companion renderer hands the captured WAV back for transcribe + save. */
+  VOICE_NOTE_SUBMIT: 'voice:note-submit',
+  /** Companion renderer reports capture failed/empty so main leaves recording state. */
+  VOICE_NOTE_CANCEL: 'voice:note-cancel',
+  /** Transcribe-only (chat window mic button); nothing is saved. */
+  VOICE_TRANSCRIBE: 'voice:transcribe',
+  NOTES_LIST: 'notes:list',
+  NOTES_ADD: 'notes:add',
+  NOTES_DELETE: 'notes:delete',
+  NOTES_CLEAR: 'notes:clear',
+  CHAT_SEND: 'chat:send',
+  CHAT_REFLECT: 'chat:reflect',
+  OPEN_CHAT: 'window:open-chat',
 } as const;
 
 /** main → renderer push events (webContents.send). */
@@ -69,7 +97,18 @@ export const EV = {
   SETTINGS_UPDATED: 'settings:updated', // Settings → live UI refresh
   FOCUS_STATE: 'focus:state',
   UPDATE_AVAILABLE: 'update:available', // UpdatePrompt → Rocky offers the new DMG
+  /** Main asks the companion renderer to start/stop microphone capture. */
+  PTT: 'voice:ptt', // PttCommand
+  /** Push-to-talk lifecycle mirror (idle/recording/processing) for any window. */
+  VOICE_STATE: 'voice:state', // VoiceCaptureState
+  /** A note was saved (voice or chat) — notebook views refresh on this. */
+  NOTE_SAVED: 'notes:saved', // NoteView
 } as const;
+
+/** Instruction pushed to the companion renderer's recorder. */
+export interface PttCommand {
+  phase: 'start' | 'stop' | 'cancel';
+}
 
 /** A newer release, ready to offer. The URL stays in main; only display data crosses. */
 export interface UpdatePrompt {
@@ -164,7 +203,34 @@ export interface RockyAPI {
   closeSelf(): void;
   quit(): Promise<void>;
 
+  // ── notes + voice input (Stage 1) ─────────────────────────────────────────
+  checkMicPermission(): Promise<MicPermissionStatus>;
+  /** Trigger the macOS microphone prompt; resolves with the resulting status. */
+  requestMicPermission(): Promise<MicPermissionStatus>;
+  /** Probe the configured speech-to-text backend (for Settings). */
+  checkSpeechSetup(): Promise<SpeechSetupStatus>;
+  /** Toggle push-to-talk exactly like the global shortcut. */
+  togglePushToTalk(): Promise<void>;
+  /** Companion recorder → main: transcribe + save the captured WAV as a note. */
+  submitVoiceNote(wavBase64: string): Promise<VoiceNoteResult>;
+  /** Companion recorder → main: capture failed or was empty. */
+  cancelVoiceNote(reason?: string): void;
+  /** Transcribe audio without saving (chat window mic). */
+  transcribeVoice(wavBase64: string): Promise<TranscriptionResult>;
+  listNotes(): Promise<NoteView[]>;
+  addNote(text: string): Promise<VoiceNoteResult>;
+  deleteNote(id: string): Promise<void>;
+  clearNotes(): Promise<void>;
+  /** One chat turn: full visible history in, Rocky's reply out. */
+  sendChat(messages: ChatMessage[]): Promise<ChatResult>;
+  /** Canned reflection over recent notes (Stage 1c). */
+  reflect(kind: ReflectionKind): Promise<ChatResult>;
+  openChat(): Promise<void>;
+
   // ── push events (main → renderer) ─────────────────────────────────────────
+  onPtt(cb: (cmd: PttCommand) => void): () => void;
+  onVoiceState(cb: (state: VoiceCaptureState) => void): () => void;
+  onNoteSaved(cb: (note: NoteView) => void): () => void;
   onReply(cb: (reply: RockyReply) => void): () => void;
   onCaptureIndicator(cb: () => void): () => void;
   onState(cb: (state: RockyState) => void): () => void;
