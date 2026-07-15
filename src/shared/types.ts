@@ -221,7 +221,7 @@ export interface LoadedSkin {
 }
 
 /** Replies that the companion renderer decorates with bubble buttons. */
-export type ReplyKind = 'listening' | 'note-saved';
+export type ReplyKind = 'listening' | 'note-saved' | 'weekly-offer';
 
 /** A single in-character reaction from Rocky. */
 export interface RockyReply {
@@ -382,6 +382,10 @@ export interface Settings {
   ollamaEmbedModel: string;
   /** OpenAI embedding model for note retrieval (cloud, consent-gated). */
   openaiEmbedModel: string;
+  /** Rocky may offer a weekly reflection (Friday afternoon, 3+ notes that week). */
+  weeklyReflectionNudge: boolean;
+  /** ISO timestamp of the last weekly-reflection offer (rate limiting). */
+  lastWeeklyNudgeISO: string | null;
 }
 
 export const INTERVAL_MIN = 1;
@@ -428,6 +432,8 @@ export const DEFAULT_SETTINGS: Settings = {
   ollamaChatModel: '',
   ollamaEmbedModel: 'nomic-embed-text',
   openaiEmbedModel: 'text-embedding-3-small',
+  weeklyReflectionNudge: true,
+  lastWeeklyNudgeISO: null,
 };
 
 // ── Notes + conversation (Stage 1: thinking companion) ───────────────────────
@@ -446,6 +452,8 @@ export interface NoteView {
   createdAt: string;
   text: string;
   source: NoteSource;
+  /** 1-3 coarse topic tags, suggested by the model after save (best-effort). */
+  topics?: string[];
 }
 
 /** Longest note text we accept (clamped at save time). */

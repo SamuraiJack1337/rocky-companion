@@ -24,6 +24,7 @@ import type { PttCommand } from '../shared/ipc';
 import { createSpeechProvider } from './providers/SpeechProvider';
 import { notes } from './notes';
 import { embedTexts } from './embeddings';
+import { suggestTopics } from './chat';
 import { getMicPermission, requestMicPermission } from './permissions';
 import {
   listeningReply,
@@ -148,7 +149,7 @@ export class VoiceNotesController {
       }
       this.deps.emitReply(noteSavedReply(noteSnippet(note.text), name));
       this.deps.broadcastNoteSaved(note);
-      this.embedInBackground(note);
+      this.enrichInBackground(note);
       return { ok: true, note };
     } finally {
       this.resetToIdle();
@@ -169,11 +170,21 @@ export class VoiceNotesController {
       : { ok: false, error: renderLine(result.error ?? '', { name: settings.callName }) };
   }
 
-  /** Compute + attach the note's embedding without blocking the confirmation. */
-  private embedInBackground(note: NoteView): void {
+  /**
+   * Enrich a saved note without blocking the confirmation: retrieval embedding
+   * plus 1-3 model-suggested topic tags. Both are best-effort; when topics
+   * land, the note is re-broadcast so open notebooks pick up the chips.
+   */
+  enrichInBackground(note: NoteView): void {
     const settings = this.deps.getSettings();
     void embedTexts([note.text], settings).then((batch) => {
       if (batch) notes.setEmbedding(note.id, batch.vectors[0], batch.model);
+    });
+    void suggestTopics(note.text, settings).then((topics) => {
+      if (topics.length === 0) return;
+      notes.setTopics(note.id, topics);
+      const updated = notes.get(note.id);
+      if (updated) this.deps.broadcastNoteSaved(updated);
     });
   }
 

@@ -7,6 +7,7 @@
 // spoken voice is configured (main enforces key + consent; we only ask).
 
 import type { ChatMessage, NoteView, ReflectionKind, Settings } from '../shared/types';
+import { noteSnippet } from '../shared/persona';
 import { VoiceRecorder } from './recorder';
 import { SpokenVoice } from './spokenVoice';
 
@@ -32,6 +33,7 @@ const saveNoteBtn = el<HTMLButtonElement>('save-note');
 const micBtn = el<HTMLButtonElement>('mic');
 const talkStatus = el<HTMLDivElement>('talk-status');
 const notesList = el<HTMLDivElement>('notes-list');
+const topicChips = el<HTMLDivElement>('topic-chips');
 const noteInput = el<HTMLInputElement>('note-input');
 const addNoteBtn = el<HTMLButtonElement>('add-note');
 const clearNotesBtn = el<HTMLButtonElement>('clear-notes');
@@ -250,13 +252,52 @@ function formatDate(iso: string): string {
     : date.toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function paintNotes(notes: NoteView[]): void {
+/** The full notebook as last loaded, plus the active topic filter. */
+let allNotes: NoteView[] = [];
+let topicFilter: string | null = null;
+
+/** Seed the composer with a note so "discuss this" is one click. */
+function discussNote(note: NoteView): void {
+  selectTab('talk');
+  const day = formatDate(note.createdAt) || note.createdAt.slice(0, 10);
+  chatInput.value = `About my note from ${day} — "${noteSnippet(note.text, 120)}": `;
+  chatInput.dispatchEvent(new Event('input'));
+  chatInput.focus();
+  chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+}
+
+/** Rebuild the topic filter chips from whatever tags the notes carry. */
+function paintTopicChips(): void {
+  const topics = Array.from(new Set(allNotes.flatMap((n) => n.topics ?? []))).sort();
+  topicChips.innerHTML = '';
+  if (topicFilter && !topics.includes(topicFilter)) topicFilter = null;
+  topicChips.hidden = topics.length === 0;
+  if (topics.length === 0) return;
+  for (const topic of [null, ...topics]) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = topic ?? 'all';
+    chip.classList.toggle('active', topicFilter === topic);
+    chip.addEventListener('click', () => {
+      topicFilter = topic;
+      paintTopicChips();
+      paintNotes();
+    });
+    topicChips.appendChild(chip);
+  }
+}
+
+function paintNotes(): void {
+  const notes = topicFilter
+    ? allNotes.filter((n) => n.topics?.includes(topicFilter as string))
+    : allNotes;
   notesList.innerHTML = '';
   if (notes.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-log';
-    empty.textContent =
-      'No notes yet. Press the talk key and speak a thought, or type one below.';
+    empty.textContent = topicFilter
+      ? `No notes tagged “${topicFilter}”.`
+      : 'No notes yet. Press the talk key and speak a thought, or type one below.';
     notesList.appendChild(empty);
     return;
   }
@@ -266,26 +307,45 @@ function paintNotes(notes: NoteView[]): void {
     const head = document.createElement('div');
     head.className = 'note-head';
     const when = document.createElement('span');
+    when.className = 'note-when';
     when.textContent = `${formatDate(note.createdAt)} · ${note.source === 'voice' ? 'spoken' : 'typed'}`;
+    const discuss = document.createElement('button');
+    discuss.type = 'button';
+    discuss.className = 'note-discuss';
+    discuss.textContent = 'Discuss';
+    discuss.addEventListener('click', () => discussNote(note));
     const del = document.createElement('button');
     del.type = 'button';
+    del.className = 'note-delete';
     del.textContent = 'Delete';
     del.addEventListener('click', async () => {
       await window.rocky.deleteNote(note.id);
       await refreshNotes();
     });
-    head.append(when, del);
+    head.append(when, discuss, del);
     const text = document.createElement('div');
     text.className = 'note-text';
     text.textContent = note.text;
     card.append(head, text);
+    if (note.topics && note.topics.length > 0) {
+      const row = document.createElement('div');
+      row.className = 'note-topics';
+      for (const topic of note.topics) {
+        const tag = document.createElement('span');
+        tag.textContent = topic;
+        row.appendChild(tag);
+      }
+      card.appendChild(row);
+    }
     notesList.appendChild(card);
   }
 }
 
 async function refreshNotes(): Promise<void> {
   try {
-    paintNotes(await window.rocky.listNotes());
+    allNotes = await window.rocky.listNotes();
+    paintTopicChips();
+    paintNotes();
   } catch {
     setStatus(notebookStatus, 'Could not load the notebook.', 'err');
   }

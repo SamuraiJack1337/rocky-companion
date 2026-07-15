@@ -37,7 +37,6 @@ import { notes } from './notes';
 import { solveEngineering } from './engineering';
 import { chatWithRocky, reflectOnNotes } from './chat';
 import type { VoiceNotesController } from './voiceNotes';
-import { embedTexts } from './embeddings';
 import {
   calculationReply,
   focusCancelledReply,
@@ -189,10 +188,9 @@ export function registerIpc(deps: IpcDeps): void {
     const note = notes.add(typeof text === 'string' ? text : '', 'chat');
     if (!note) return { ok: false, error: 'Nothing to keep.' };
     deps.broadcastNoteSaved(note);
-    // Embed in the background; retrieval falls back to keywords until then.
-    void embedTexts([note.text], store.get()).then((batch) => {
-      if (batch) notes.setEmbedding(note.id, batch.vectors[0], batch.model);
-    });
+    // Embedding + topic tags in the background; retrieval falls back to
+    // keywords and the notebook shows no chips until they land.
+    deps.voiceNotes.enrichInBackground(note);
     return { ok: true, note };
   });
   ipcMain.handle(CH.NOTES_DELETE, (_e, id: string) => {

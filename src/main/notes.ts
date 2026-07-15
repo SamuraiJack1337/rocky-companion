@@ -35,7 +35,13 @@ function normalizeNoteText(text: string): string {
 }
 
 function toView(note: StoredNote): NoteView {
-  return { id: note.id, createdAt: note.createdAt, text: note.text, source: note.source };
+  return {
+    id: note.id,
+    createdAt: note.createdAt,
+    text: note.text,
+    source: note.source,
+    ...(note.topics && note.topics.length > 0 ? { topics: [...note.topics] } : {}),
+  };
 }
 
 class NotesStore {
@@ -102,6 +108,20 @@ class NotesStore {
     note.embedding = embedding;
     note.embeddingModel = model;
     this.save();
+  }
+
+  /** Attach model-suggested topic tags (computed asynchronously after save). */
+  setTopics(id: string, topics: string[]): void {
+    const note = this.load().find((n) => n.id === id);
+    if (!note || topics.length === 0) return;
+    note.topics = topics.slice(0, 3);
+    this.save();
+  }
+
+  /** One note by id (embedding stripped), or null. */
+  get(id: string): NoteView | null {
+    const note = this.load().find((n) => n.id === id);
+    return note ? toView(note) : null;
   }
 
   /** All notes, newest first, embeddings stripped. */

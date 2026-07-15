@@ -14,9 +14,11 @@ import {
   buildNotesContext,
   CHAT_CONTEXT_NOTES,
   CHAT_SYSTEM_PROMPT,
+  parseTopicTags,
   REFLECTION_CONTEXT_NOTES,
   reflectionIsWeekly,
   reflectionPrompt,
+  TOPIC_TAG_PROMPT,
 } from '../shared/chatPrompt';
 import { renderLine } from '../shared/lines';
 import { getOpenAIKey } from './keys';
@@ -125,6 +127,19 @@ async function complete(
   const reply = sanitizeReply(renderLine(raw, { name }));
   if (!reply) return fail(cloudChatAllowed(settings) ? CLOUD_FAILED : LOCAL_FAILED, name);
   return { ok: true, reply, usedNotes };
+}
+
+/**
+ * Best-effort 1-3 topic tags for a note, via the same provider selection (and
+ * the same notes-cloud gate) as chat. Returns [] when no backend is usable —
+ * a note without tags is fine and can be re-tagged another day.
+ */
+export async function suggestTopics(text: string, settings: Settings): Promise<string[]> {
+  const history: ChatMessage[] = [{ role: 'user', text: text.slice(0, 2_000) }];
+  const raw = cloudChatAllowed(settings)
+    ? await completeOpenAI(TOPIC_TAG_PROMPT, history, settings)
+    : await completeOllama(TOPIC_TAG_PROMPT, history, settings);
+  return raw ? parseTopicTags(raw) : [];
 }
 
 async function completeOpenAI(

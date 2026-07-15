@@ -80,6 +80,7 @@ const intervalRange = el<HTMLInputElement>('interval-range');
 const intervalNumber = el<HTMLInputElement>('interval');
 const strictIntervalInput = el<HTMLInputElement>('strict-interval');
 const mutedInput = el<HTMLInputElement>('muted');
+const weeklyNudgeInput = el<HTMLInputElement>('weekly-nudge');
 const updateCheckInput = el<HTMLInputElement>('update-check');
 const clickThroughInput = el<HTMLInputElement>('click-through');
 const blockedAppsInput = el<HTMLTextAreaElement>('blocked-apps');
@@ -218,6 +219,7 @@ function applySettings(s: Settings): void {
   strictIntervalInput.checked = s.strictInterval;
 
   mutedInput.checked = s.muted;
+  weeklyNudgeInput.checked = s.weeklyReflectionNudge;
   updateCheckInput.checked = s.updateCheckEnabled;
   clickThroughInput.checked = s.clickThrough;
   blockedAppsInput.value = s.blockedApps.join('\n');
@@ -634,6 +636,7 @@ saveBtn.addEventListener('click', async () => {
     intervalMinutes: clampInterval(Number(intervalNumber.value)),
     strictInterval: strictIntervalInput.checked,
     muted: mutedInput.checked,
+    weeklyReflectionNudge: weeklyNudgeInput.checked,
     updateCheckEnabled: updateCheckInput.checked,
     clickThrough: clickThroughInput.checked,
     blockedApps: readBlockedApps(),

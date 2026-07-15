@@ -38,6 +38,8 @@ import {
 } from './windows';
 import { registerIpc } from './ipc';
 import { VoiceNotesController } from './voiceNotes';
+import { notes } from './notes';
+import { NUDGE_MIN_NOTES, shouldOfferWeeklyNudge } from './weeklyNudge';
 import { FocusManager } from './focus';
 import { getFrontmostAppName } from './activeApp';
 import { memory } from './memory';
@@ -56,6 +58,7 @@ import {
   focusCompletedReply,
   focusStartedReply,
   greetingReply,
+  weeklyReflectionOfferReply,
 } from '../shared/persona';
 
 // A small menu-bar template icon (black + alpha circle), embedded so there is
@@ -142,6 +145,28 @@ const voiceNotes = new VoiceNotesController({
   broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
   showCompanion: () => showCompanionWindow(),
 });
+
+/**
+ * Friday-afternoon weekly reflection offer: purely local check, throttled to
+ * once per week, and the reflection itself runs only if the user accepts the
+ * bubble's "Reflect now" button.
+ */
+function maybeOfferWeeklyReflection(): void {
+  const s = store.get();
+  if (!s.consentGiven) return;
+  const now = new Date();
+  const weekAgoISO = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const offer = shouldOfferWeeklyNudge(now, {
+    enabled: s.weeklyReflectionNudge,
+    paused: s.paused,
+    lastNudgeISO: s.lastWeeklyNudgeISO,
+    recentNoteCount: notes.recent(NUDGE_MIN_NOTES, weekAgoISO).length,
+  });
+  if (!offer) return;
+  store.set({ lastWeeklyNudgeISO: now.toISOString() });
+  showCompanionWindow();
+  emitReply(weeklyReflectionOfferReply(s.callName));
+}
 
 /**
  * (Re-)register the push-to-talk hotkey from settings. On failure (invalid or
@@ -427,6 +452,13 @@ if (!gotLock) {
       broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
     });
     updateChecker.start();
+
+    // Weekly-reflection offer: check shortly after launch, then twice an hour.
+    // Cheap and fully local; shouldOfferWeeklyNudge gates everything.
+    const nudgeDelay = setTimeout(() => maybeOfferWeeklyReflection(), 45_000);
+    nudgeDelay.unref();
+    const nudgeTimer = setInterval(() => maybeOfferWeeklyReflection(), 30 * 60_000);
+    nudgeTimer.unref();
 
     const s = store.get();
     if (!s.consentGiven) {

@@ -429,6 +429,21 @@ export function voiceTroubleReply(errorLine: string, name?: string): RockyReply 
   return ritual(renderLine(errorLine, { name }), 'concerned', 'protect', 'concern');
 }
 
+/** Friday-afternoon offer to reflect on the week's notes (bubble has buttons). */
+export function weeklyReflectionOfferReply(name?: string): RockyReply {
+  return {
+    ...ritual(
+      renderLine('A week of thoughts sits in the notebook, {name}. Rocky can reflect on them, question?', {
+        name,
+      }),
+      'curious',
+      'listen',
+      'question',
+    ),
+    kind: 'weekly-offer',
+  };
+}
+
 /** Microphone permission is missing. */
 export function micDeniedReply(name?: string): RockyReply {
   return ritual(

@@ -65,3 +65,45 @@ export function reflectionPrompt(kind: ReflectionKind): string {
 export function reflectionIsWeekly(kind: ReflectionKind): boolean {
   return kind === 'weekly';
 }
+
+// ── Topic auto-tagging ────────────────────────────────────────────────────────
+
+export const TOPIC_TAG_PROMPT = `You label personal notes with coarse topic tags so their author can browse them later.
+
+Given one note, return ONLY a JSON array of 1 to 3 tags. Each tag: lowercase, 1-2 plain words, general rather than specific ("health" not "tuesday knee pain"). No commentary, no other text.
+
+Example output: ["project idea","hardware"]`;
+
+/** Longest tag we keep; anything longer is model rambling, not a tag. */
+const TAG_MAX_LENGTH = 24;
+const TAG_MAX_COUNT = 3;
+
+/**
+ * Parse the model's tag reply into clean tags. Tolerates prose around the
+ * JSON array. Returns [] when nothing usable came back — tagging is
+ * best-effort and a note without tags is perfectly fine.
+ */
+export function parseTopicTags(raw: string): string[] {
+  if (!raw || typeof raw !== 'string') return [];
+  const start = raw.indexOf('[');
+  const end = raw.lastIndexOf(']');
+  if (start < 0 || end <= start) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const item of parsed) {
+    if (typeof item !== 'string') continue;
+    const tag = item.toLowerCase().replace(/[^a-z0-9 -]/g, '').replace(/\s+/g, ' ').trim();
+    if (!tag || tag.length > TAG_MAX_LENGTH || seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+    if (tags.length >= TAG_MAX_COUNT) break;
+  }
+  return tags;
+}

@@ -147,9 +147,23 @@
         margin-bottom: 8px;
         padding: 9px 11px;
       }
-      .note .note-head { align-items: baseline; color: var(--muted); display: flex; font-size: 10.5px; gap: 8px; justify-content: space-between; margin-bottom: 4px; }
+      .note .note-head { align-items: baseline; color: var(--muted); display: flex; font-size: 10.5px; gap: 8px; margin-bottom: 4px; }
+      .note .note-when { flex: 1; }
       .note .note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-      .note button { background: none; border: none; color: var(--danger); cursor: pointer; font: inherit; font-size: 11px; padding: 0; }
+      .note .note-head button { background: none; border: none; cursor: pointer; font: inherit; font-size: 11px; padding: 0; }
+      .note .note-discuss { color: var(--accent); }
+      .note .note-delete { color: var(--danger); }
+      .note .note-topics { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      .note .note-topics span {
+        background: var(--accent-deep);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 10px;
+        padding: 1px 8px;
+      }
+      #topic-chips { margin: 0 0 8px; }
+      #topic-chips button.active { background: var(--accent-deep); border-color: var(--accent); }
       .note-add { display: flex; gap: 8px; margin: 10px 0; }
       #note-input {
         background: var(--panel-2);
@@ -229,6 +243,7 @@
     </section>
 
     <section class="panel" id="notebook-panel" role="tabpanel" aria-labelledby="notebook-tab" hidden>
+      <div class="chips" id="topic-chips" aria-label="Filter by topic" hidden></div>
       <div id="notes-list"></div>
       <div class="note-add">
         <input id="note-input" type="text" maxlength="4000" placeholder="Type a thought to keep…" />

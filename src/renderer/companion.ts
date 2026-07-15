@@ -892,22 +892,45 @@ class Companion {
   private installPointer(): void {
     const CLICK_SLOP_PX = 4;
     const CLICK_MAX_MS = 600;
+    /** Holding Rocky without moving this long starts/stops a voice note. */
+    const LONG_PRESS_MS = 550;
     let down = false;
     let dragging = false;
+    let longPressed = false;
     let downX = 0;
     let downY = 0;
     let downAt = 0;
+    let pressTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearPressTimer = () => {
+      if (pressTimer !== null) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
 
     this.canvas.addEventListener('pointerdown', (e: PointerEvent) => {
       if (e.button !== 0) return;
       down = true;
       dragging = false;
+      longPressed = false;
       downX = e.screenX;
       downY = e.screenY;
       downAt = performance.now();
       // Capture so we keep receiving moves even if the cursor briefly outruns
       // the window while it is being repositioned.
       this.canvas.setPointerCapture(e.pointerId);
+      // Long-press = push-to-talk, so capturing a thought is one physical
+      // gesture on Rocky himself (a press that drags or releases early still
+      // means move / look).
+      clearPressTimer();
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        if (!down || dragging) return;
+        longPressed = true;
+        this.active.flash(0.7);
+        void window.rocky.togglePushToTalk();
+      }, LONG_PRESS_MS);
     });
 
     this.canvas.addEventListener('pointermove', (e: PointerEvent) => {
@@ -915,6 +938,8 @@ class Companion {
       const dx = e.screenX - downX;
       const dy = e.screenY - downY;
       if (!dragging && Math.hypot(dx, dy) > CLICK_SLOP_PX) {
+        clearPressTimer();
+        if (longPressed) return; // recording started; a late wobble is not a drag
         dragging = true;
         this.canvas.classList.add('dragging');
         window.rocky.beginWindowDrag();
@@ -925,9 +950,13 @@ class Companion {
     const end = () => {
       if (!down) return;
       down = false;
+      clearPressTimer();
       this.canvas.classList.remove('dragging');
-      if (!dragging && performance.now() - downAt <= CLICK_MAX_MS) this.pokeLook();
+      if (!dragging && !longPressed && performance.now() - downAt <= CLICK_MAX_MS) {
+        this.pokeLook();
+      }
       dragging = false;
+      longPressed = false;
     };
     this.canvas.addEventListener('pointerup', end);
     this.canvas.addEventListener('pointercancel', end);
@@ -1107,6 +1136,14 @@ class Companion {
       return {
         actions: [{ label: 'Notes & chat…', onClick: () => void window.rocky.openChat() }],
         delayMs: 12_000,
+      };
+    }
+    if (reply.kind === 'weekly-offer') {
+      return {
+        actions: [
+          { label: 'Reflect now', onClick: () => void window.rocky.openChat('weekly') },
+          { label: 'Later', onClick: () => undefined },
+        ],
       };
     }
     return {};

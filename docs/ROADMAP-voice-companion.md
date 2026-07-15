@@ -87,6 +87,14 @@ Rough effort: ~3–6 weeks part-time (cloud-first), +1–2 weeks for solid local
 Rough effort: wake word + realtime voice 4–8 weeks; basic tool actions
 2–4 weeks; full proactive assistant is an ongoing program, not a milestone.
 
+## Backlog (agreed, not yet built)
+
+- **Streaming chat replies.** Ollama chat on long answers feels slow; stream
+  tokens over IPC into the chat window's Rocky bubble as they arrive (Ollama
+  `stream: true` NDJSON / OpenAI Responses streaming → an `EV.CHAT_TOKEN`
+  push event, falling back to the current one-shot path on error). Agreed to
+  do this after the Stage 1 UX round; medium effort.
+
 ## Prerequisites / risks
 
 - **Code signing:** ad-hoc signing already forces per-update re-grants of
