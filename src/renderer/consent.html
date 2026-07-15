@@ -473,7 +473,14 @@
             <input type="text" id="ollama-host" autocomplete="off" spellcheck="false" />
             <p class="muted" style="margin: 4px 0 0">Local mode accepts loopback hosts only.</p>
             <label class="field" for="ollama-model">Vision model</label>
-            <input type="text" id="ollama-model" autocomplete="off" spellcheck="false" />
+            <input type="text" id="ollama-model" list="ollama-model-suggestions" autocomplete="off" spellcheck="false" />
+            <datalist id="ollama-model-suggestions">
+              <option value="llama3.2-vision">Llama 3.2 Vision — 11B, best quality, slow to load</option>
+              <option value="gemma3:4b">Gemma 3 4B — light &amp; multimodal, good balance</option>
+              <option value="moondream">Moondream — ~1.7B, fastest, lowest RAM</option>
+              <option value="llava">LLaVA — classic open vision model</option>
+            </datalist>
+            <p class="muted" style="margin: 4px 0 0">Must be vision-capable. Lighter picks (moondream, gemma3:4b) load faster.</p>
             <div class="row">
               <button type="button" class="secondary" id="check-ollama">Check Ollama</button>
             </div>

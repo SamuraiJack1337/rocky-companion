@@ -133,8 +133,22 @@ async function handleCheckOllama(): Promise<void> {
 
   try {
     const result = await window.rocky.checkOllama(host, model);
-    if (result.reachable && result.modelAvailable) {
-      setStatus(ollamaStatus, `Good. Ollama is reachable and <code>${escapeHtml(model)}</code> is ready.`, 'ok');
+    if (result.reachable && result.modelAvailable && result.modelResponsive !== false) {
+      const secs = result.warmupMs != null ? Math.round(result.warmupMs / 100) / 10 : null;
+      const timing = secs != null ? ` (first response took ${secs}s)` : '';
+      setStatus(
+        ollamaStatus,
+        `Good. Ollama is reachable and <code>${escapeHtml(model)}</code> responds.${timing}`,
+        'ok',
+      );
+    } else if (result.reachable && result.modelAvailable && result.modelResponsive === false) {
+      const detail = result.error ? ` ${escapeHtml(result.error)}` : '';
+      setStatus(
+        ollamaStatus,
+        `<code>${escapeHtml(model)}</code> is installed but did not respond in time.${detail}<br />` +
+          `Try a lighter vision model like <code>moondream</code> or <code>gemma3:4b</code>. You can also continue anyway.`,
+        'warn',
+      );
     } else if (result.reachable && !result.modelAvailable) {
       const have = result.models.length
         ? ` Found: ${result.models.map(escapeHtml).join(', ')}.`

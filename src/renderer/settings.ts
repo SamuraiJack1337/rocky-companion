@@ -400,8 +400,21 @@ checkOllamaBtn.addEventListener('click', async () => {
         `Reachable, but model "${model}" is not installed. Run: ollama pull ${model}`,
         'warn',
       );
+    } else if (result.modelResponsive === false) {
+      // Installed but the warmup generation failed/timed out — this is exactly
+      // the state where Settings used to say "ready" while the app failed.
+      const why = result.error ? ` ${result.error}` : '';
+      setStatus(
+        ollamaStatus,
+        `"${model}" is installed but not responding.${why} Try a lighter vision model (e.g. moondream or gemma3:4b).`,
+        'err',
+      );
     } else {
-      setStatus(ollamaStatus, `Reachable and "${model}" is ready. Good.`, 'ok');
+      // Warmed up successfully — report how long it took so a slow-but-working
+      // heavy model sets the right expectation.
+      const secs = result.warmupMs != null ? Math.round(result.warmupMs / 100) / 10 : null;
+      const timing = secs != null ? ` (first response took ${secs}s)` : '';
+      setStatus(ollamaStatus, `Reachable and "${model}" responds.${timing} Good.`, 'ok');
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

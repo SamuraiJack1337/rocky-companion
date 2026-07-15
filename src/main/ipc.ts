@@ -79,7 +79,9 @@ export function registerIpc(deps: IpcDeps): void {
 
   // ── connectivity / permissions ───────────────────────────────────────────
   ipcMain.handle(CH.OLLAMA_CHECK, (_e, args: { host: string; model: string }) =>
-    probeOllama(args.host, args.model),
+    // Warm up the model here so Settings reproduces the app's real behavior
+    // instead of only pinging /api/tags.
+    probeOllama(args.host, args.model, { warmup: true }),
   );
   ipcMain.handle(CH.SCREEN_PERMISSION_CHECK, () => getScreenPermission());
   ipcMain.handle(CH.SCREEN_PERMISSION_OPEN, () => openScreenSettings());

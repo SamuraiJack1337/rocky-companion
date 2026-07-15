@@ -341,7 +341,18 @@
       </div>
       <div class="field">
         <label class="block" for="ollama-model">Vision model</label>
-        <input type="text" id="ollama-model" spellcheck="false" autocomplete="off" placeholder="llama3.2-vision" />
+        <input type="text" id="ollama-model" list="ollama-model-suggestions" spellcheck="false" autocomplete="off" placeholder="llama3.2-vision" />
+        <datalist id="ollama-model-suggestions">
+          <option value="llama3.2-vision">Llama 3.2 Vision — 11B, best quality, slow to load</option>
+          <option value="gemma3:4b">Gemma 3 4B — light &amp; multimodal, good balance</option>
+          <option value="moondream">Moondream — ~1.7B, fastest, lowest RAM</option>
+          <option value="llava">LLaVA — classic open vision model</option>
+        </datalist>
+        <div class="hint">
+          Must be a <strong>vision-capable</strong> model — it reads screenshots. On a slower
+          machine, a lighter one (moondream, gemma3:4b) avoids load timeouts. Text-only models
+          (gemma3:1b, gemma2, mistral) will not work here.
+        </div>
       </div>
       <div class="field">
         <button id="check-ollama">Check Ollama</button>

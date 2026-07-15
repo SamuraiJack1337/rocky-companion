@@ -397,6 +397,13 @@ export interface OllamaStatus {
   reachable: boolean;
   modelAvailable: boolean;
   models: string[];
+  /** Whether a warmup generation actually ran within the timeout. undefined
+   *  when no warmup was requested; false when the model failed to respond in
+   *  time (this is the state a user hits when Settings "verifies" but the app
+   *  then reads "not connected"). */
+  modelResponsive?: boolean;
+  /** Rough wall-clock of the warmup generation (ms), for honest UI messaging. */
+  warmupMs?: number;
   error?: string;
 }
 

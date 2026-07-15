@@ -9,16 +9,48 @@ import type { OllamaStatus, ProviderKind, ScreenObservation } from '../../shared
 import { buildSystemPrompt, buildUserPrompt, parseObservation, promptOptions } from '../../shared/persona';
 import type { AnalyzeOptions, ProviderReadiness, VisionProvider } from './VisionProvider';
 
-/** How long to wait on a single analyze() before giving up (ms). */
-const ANALYZE_TIMEOUT_MS = 60_000;
-/** Shorter timeout for the cheap readiness probe (ms). */
+/** How long to wait on a single analyze() before giving up (ms). A first
+ *  capture may cold-load a multi-GB vision model into memory, so this is
+ *  deliberately generous — a short timeout used to abort mid-load and surface
+ *  as a bogus "cannot reach" message. */
+const ANALYZE_TIMEOUT_MS = 120_000;
+/** Shorter timeout for the cheap reachability probe (GET /api/tags) (ms). */
 const PROBE_TIMEOUT_MS = 4_000;
+/** Longer timeout for the optional warmup generation, which may cold-load the
+ *  model just like a real capture would. */
+const WARMUP_TIMEOUT_MS = 120_000;
+/** Keep the model resident between captures so it does not cold-load every
+ *  time (Ollama unloads after ~5 min idle by default). */
+const KEEP_ALIVE = '30m';
 
-/** Friendly, in-character error shown when Ollama is unreachable or errors.
- *  A {name} template — the scheduler renders the call-name in. */
+/** Opt-in diagnostics: set ROCKY_DEBUG=1 to log the underlying cause of a
+ *  provider failure (class + message only — never image bytes or model
+ *  content) so field reports of "not connected" are actually diagnosable. */
+function debugLog(where: string, err: unknown): void {
+  if (!process.env.ROCKY_DEBUG) return;
+  const detail =
+    err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  // eslint-disable-next-line no-console
+  console.error(`[ollama:${where}] ${detail}`);
+}
+
+/** Friendly, in-character errors shown when analyze() fails. Each is a {name}
+ *  template — the scheduler renders the call-name in — and each is kept ≤160
+ *  chars so the scheduler renders it as a spoken line rather than a fallback.
+ *  Distinct messages matter: the tester's "connected in Settings but not in the
+ *  app" report came from every failure collapsing into UNREACHABLE. */
 const UNREACHABLE_MESSAGE =
   'Rocky cannot reach the local brain (Ollama). Is it running, {name}?';
-/** Same failure for the settings/consent probe UI, where no name is rendered. */
+/** Our own timeout fired — most often a heavy vision model still cold-loading. */
+const TIMEOUT_MESSAGE =
+  'Rocky\'s local brain is taking too long — the vision model may still be loading. A lighter one helps, {name}.';
+/** Ollama answered with a non-OK status (e.g. model missing / cannot run). */
+const MODEL_ERROR_MESSAGE =
+  'Rocky can\'t run that model in Ollama — is it installed and vision-capable, {name}?';
+/** Reached the model but the reply was not the JSON we could parse. */
+const PARSE_ERROR_MESSAGE =
+  'Rocky\'s brain replied but I couldn\'t read it — try a different vision model, {name}.';
+/** Same reachability failure for the settings/consent probe UI (no name). */
 const PROBE_UNREACHABLE_MESSAGE =
   'Rocky cannot reach the local brain (Ollama). Is it running?';
 
@@ -42,15 +74,20 @@ export function isLoopbackOllamaHost(host: string): boolean {
 
 /**
  * Build an AbortSignal that fires when EITHER our own timeout elapses OR the
- * caller's signal aborts. Returns the merged signal plus a cleanup function to
- * clear the timer and detach listeners.
+ * caller's signal aborts. Returns the merged signal, a cleanup function, and a
+ * `timedOut()` predicate so callers can tell an internal timeout apart from an
+ * external cancel (pause/quit) — the two must surface very differently.
  */
 function withTimeout(
   timeoutMs: number,
   external?: AbortSignal,
-): { signal: AbortSignal; cleanup: () => void } {
+): { signal: AbortSignal; cleanup: () => void; timedOut: () => boolean } {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let didTimeOut = false;
+  const timer = setTimeout(() => {
+    didTimeOut = true;
+    controller.abort();
+  }, timeoutMs);
 
   let onExternalAbort: (() => void) | undefined;
   if (external) {
@@ -66,8 +103,12 @@ function withTimeout(
     clearTimeout(timer);
     if (external && onExternalAbort) external.removeEventListener('abort', onExternalAbort);
   };
-  return { signal: controller.signal, cleanup };
+  return { signal: controller.signal, cleanup, timedOut: () => didTimeOut };
 }
+
+/** Thrown when the model responds but the payload isn't parseable JSON. Lets
+ *  analyze()'s catch tell a parse failure apart from a transport failure. */
+class ObservationParseError extends Error {}
 
 /** Case-insensitive model match that tolerates a missing ':latest' suffix. */
 function modelMatches(available: string, wanted: string): boolean {
@@ -99,7 +140,7 @@ export class OllamaProvider implements VisionProvider {
     // Ollama takes raw base64 images in the `images` array; the mime type is
     // inferred by the server, so _mime is unused here.
     const style = opts?.remarkStyle ?? 'classic';
-    const { signal, cleanup } = withTimeout(ANALYZE_TIMEOUT_MS, opts?.signal);
+    const { signal, cleanup, timedOut } = withTimeout(ANALYZE_TIMEOUT_MS, opts?.signal);
     try {
       const res = await fetch(`${this.host}/api/chat`, {
         method: 'POST',
@@ -108,6 +149,7 @@ export class OllamaProvider implements VisionProvider {
           model: this.model,
           stream: false,
           format: 'json',
+          keep_alive: KEEP_ALIVE,
           options: { temperature: 0.6 },
           messages: [
             { role: 'system', content: buildSystemPrompt(style) },
@@ -122,17 +164,38 @@ export class OllamaProvider implements VisionProvider {
       });
 
       if (!res.ok) {
-        // Don't surface server bodies (could echo content). Generic message.
-        throw new Error(UNREACHABLE_MESSAGE);
+        // Don't surface server bodies (could echo content). A non-OK status is
+        // typically a missing / non-vision model, not "Ollama is down".
+        throw new Error(MODEL_ERROR_MESSAGE);
       }
 
-      const data = (await res.json()) as ChatResponse;
+      let data: ChatResponse;
+      try {
+        data = (await res.json()) as ChatResponse;
+      } catch {
+        // Reached the model but the body wasn't JSON we can read (e.g. a
+        // truncated stream or an HTML error page). parseObservation itself
+        // never throws, so this res.json() step is the only parse failure.
+        throw new ObservationParseError('malformed response');
+      }
       const content = data.message?.content ?? '';
       return parseObservation(content, style);
     } catch (err) {
-      // Network failure, abort/timeout, or non-OK above all collapse to one
-      // friendly, in-character error. Never include the underlying detail
-      // (it could leak host/path/content).
+      // Collapse each failure mode to a DISTINCT in-character message. The old
+      // code funneled everything into UNREACHABLE, which is why a merely slow
+      // model read as "not connected". We never surface the raw detail (could
+      // leak host/path/content) — only ROCKY_DEBUG logs it.
+      debugLog('analyze', err);
+
+      // External cancel (pause/quit): not an error the user should hear about.
+      if (opts?.signal?.aborted && !timedOut()) throw err;
+      // Our own timeout fired — the model is likely still cold-loading.
+      if (timedOut()) throw new Error(TIMEOUT_MESSAGE);
+      // Parsed a reply but it wasn't the JSON we expected.
+      if (err instanceof ObservationParseError) throw new Error(PARSE_ERROR_MESSAGE);
+      // Non-OK HTTP status raised above.
+      if (err instanceof Error && err.message === MODEL_ERROR_MESSAGE) throw err;
+      // Anything left is a genuine transport failure: Ollama isn't answering.
       throw new Error(UNREACHABLE_MESSAGE);
     } finally {
       cleanup();
@@ -158,8 +221,17 @@ export class OllamaProvider implements VisionProvider {
  * Probe a local Ollama server: is it reachable, and is the requested model
  * installed? Used by the Settings UI (via IPC) to show live connection state.
  * Model matching is case-insensitive and tolerant of a ':latest' suffix.
+ *
+ * With `warmup`, after the reachability check it also runs a tiny generation to
+ * confirm the model actually *responds* — the same cost the app pays on its
+ * first capture. This closes the gap that produced the tester's report: a bare
+ * /api/tags ping "verifies" while a slow-loading model still fails in the app.
  */
-export async function probeOllama(host: string, model: string): Promise<OllamaStatus> {
+export async function probeOllama(
+  host: string,
+  model: string,
+  opts?: { warmup?: boolean },
+): Promise<OllamaStatus> {
   if (!isLoopbackOllamaHost(host)) {
     return {
       reachable: false,
@@ -170,20 +242,72 @@ export async function probeOllama(host: string, model: string): Promise<OllamaSt
   }
   const base = normalizeHost(host);
   const { signal, cleanup } = withTimeout(PROBE_TIMEOUT_MS);
+  let models: string[];
+  let modelAvailable: boolean;
   try {
     const res = await fetch(`${base}/api/tags`, { method: 'GET', signal });
     if (!res.ok) {
       return { reachable: false, modelAvailable: false, models: [], error: PROBE_UNREACHABLE_MESSAGE };
     }
     const data = (await res.json()) as TagsResponse;
-    const models = (data.models ?? [])
+    models = (data.models ?? [])
       .map((m) => m.name)
       .filter((n): n is string => typeof n === 'string');
-    const modelAvailable = models.some((m) => modelMatches(m, model));
-    return { reachable: true, modelAvailable, models };
-  } catch {
+    modelAvailable = models.some((m) => modelMatches(m, model));
+  } catch (err) {
+    debugLog('probe.tags', err);
     return { reachable: false, modelAvailable: false, models: [], error: PROBE_UNREACHABLE_MESSAGE };
   } finally {
     cleanup();
+  }
+
+  // Reachable but the model isn't installed, or no warmup requested: report
+  // what we know without paying for a generation.
+  if (!opts?.warmup || !modelAvailable) {
+    return { reachable: true, modelAvailable, models };
+  }
+
+  // Warmup: a trivial text-only generation loads the model into memory exactly
+  // like a real capture would, so a slow/failed load shows up here instead of
+  // silently in the app later. Text-only still loads full vision weights.
+  const warm = withTimeout(WARMUP_TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(`${base}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        keep_alive: KEEP_ALIVE,
+        options: { num_predict: 1 },
+        messages: [{ role: 'user', content: 'ok' }],
+      }),
+      signal: warm.signal,
+    });
+    const warmupMs = Date.now() - startedAt;
+    if (!res.ok) {
+      return {
+        reachable: true,
+        modelAvailable,
+        models,
+        modelResponsive: false,
+        warmupMs,
+        error: 'The model is installed but Ollama could not run it (is it vision-capable?).',
+      };
+    }
+    return { reachable: true, modelAvailable, models, modelResponsive: true, warmupMs };
+  } catch (err) {
+    debugLog('probe.warmup', err);
+    return {
+      reachable: true,
+      modelAvailable,
+      models,
+      modelResponsive: false,
+      warmupMs: Date.now() - startedAt,
+      error: 'The model is installed but did not respond in time — it may be too heavy for this machine.',
+    };
+  } finally {
+    warm.cleanup();
   }
 }

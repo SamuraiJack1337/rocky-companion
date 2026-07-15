@@ -171,16 +171,26 @@ Everything stays on your machine. Recommended for privacy.
    ollama pull llama3.2-vision
    ```
 
-   `llama3.2-vision` is the default. If you want something lighter, `moondream`
-   works as a smaller fallback (less detailed, but faster and lower-memory):
+   `llama3.2-vision` (11B) is the default and gives the richest observations,
+   but it is heavy: on a modest machine its first load into memory can be slow
+   enough that Rocky reports a timeout. If that happens, pick a lighter
+   **vision-capable** model instead:
 
    ```bash
-   ollama pull moondream
+   ollama pull gemma3:4b   # light, multimodal, good balance
+   ollama pull moondream   # ~1.7B, fastest, lowest memory
    ```
+
+   > The model **must** support images. Text-only models — `gemma3:1b`,
+   > `gemma2`, `mistral`, plain `llama3` — will not work, because Rocky sends a
+   > screenshot with every request.
 
 3. Make sure Ollama is running. It listens on `http://localhost:11434` by
    default — this is the host Rocky uses out of the box.
-4. In Rocky, leave the provider on **Local** (the default) and select your model.
+4. In Rocky, leave the provider on **Local** (the default) and select your
+   model. Click **Check Ollama** — it now warms the model up and tells you not
+   just that it is installed but that it actually *responds*, so you catch a
+   too-heavy model before relying on it.
 
 No key, no account, no network egress for analysis.
 
