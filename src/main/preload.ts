@@ -7,6 +7,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { CH, EV } from '../shared/ipc';
 import type {
   RockyAPI,
+  ChatActionCommand,
   ConsentPayload,
   PttCommand,
   TtsOverrides,
@@ -118,13 +119,16 @@ const api: RockyAPI = {
     ipcRenderer.invoke(CH.CHAT_SEND, messages) as Promise<ChatResult>,
   reflect: (kind: ReflectionKind) =>
     ipcRenderer.invoke(CH.CHAT_REFLECT, kind) as Promise<ChatResult>,
-  openChat: () => ipcRenderer.invoke(CH.OPEN_CHAT) as Promise<void>,
+  openChat: (reflect?: ReflectionKind) =>
+    ipcRenderer.invoke(CH.OPEN_CHAT, reflect) as Promise<void>,
 
   // push events (main → renderer)
   onPtt: (cb: (cmd: PttCommand) => void) => subscribe<PttCommand>(EV.PTT, cb),
   onVoiceState: (cb: (state: VoiceCaptureState) => void) =>
     subscribe<VoiceCaptureState>(EV.VOICE_STATE, cb),
   onNoteSaved: (cb: (note: NoteView) => void) => subscribe<NoteView>(EV.NOTE_SAVED, cb),
+  onChatAction: (cb: (cmd: ChatActionCommand) => void) =>
+    subscribe<ChatActionCommand>(EV.CHAT_ACTION, cb),
   onReply: (cb: (reply: RockyReply) => void) => subscribe<RockyReply>(EV.REPLY, cb),
   onCaptureIndicator: (cb: () => void) => {
     const listener = () => cb();

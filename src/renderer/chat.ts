@@ -326,6 +326,21 @@ clearNotesBtn.addEventListener('click', async () => {
 
 window.rocky.onNoteSaved(() => void refreshNotes());
 
+// Deep-link: Rocky's popover / tray asked for a reflection on arrival.
+const REFLECT_LABELS: Record<ReflectionKind, string> = {
+  summarize: 'Summarize my notes',
+  connections: 'Find connections',
+  questions: 'Questions for me',
+  weekly: 'Weekly reflection',
+};
+window.rocky.onChatAction((cmd) => {
+  const label = REFLECT_LABELS[cmd.reflect];
+  if (label) {
+    selectTab('talk');
+    void reflect(cmd.reflect, label);
+  }
+});
+
 window.rocky.onVoiceState((state) => {
   voiceState.textContent =
     state === 'recording'

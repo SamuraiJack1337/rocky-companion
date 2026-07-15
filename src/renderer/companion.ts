@@ -23,6 +23,7 @@ import { PROCEDURAL_SKIN } from '../shared/types';
 import { ToneVoice } from './toneVoice';
 import { SpokenVoice } from './spokenVoice';
 import { SpeechBubble } from './speechBubble';
+import type { BubbleAction } from './speechBubble';
 import { SpriteSkin } from './skins';
 import type { CreatureMode, CreatureRenderer } from './skins';
 import { installControls } from './controls';
@@ -1087,6 +1088,30 @@ class Companion {
     }
   }
 
+  /**
+   * Bubble quick-actions for special reply kinds, so voice notes and the
+   * notebook are reachable straight from Rocky himself.
+   */
+  private bubbleExtras(reply: RockyReply): { actions?: BubbleAction[]; delayMs?: number } {
+    if (reply.kind === 'listening') {
+      return {
+        actions: [
+          { label: 'Save note', onClick: () => void window.rocky.togglePushToTalk() },
+          { label: 'Cancel', onClick: () => window.rocky.cancelVoiceNote() },
+        ],
+        // Stay up for the whole possible recording window (main caps at 2 min).
+        delayMs: 130_000,
+      };
+    }
+    if (reply.kind === 'note-saved') {
+      return {
+        actions: [{ label: 'Notes & chat…', onClick: () => void window.rocky.openChat() }],
+        delayMs: 12_000,
+      };
+    }
+    return {};
+  }
+
   /** Handle an incoming reply: animate, show the bubble, and voice the line. */
   private async handleReply(reply: RockyReply): Promise<void> {
     // Remember where to settle once the bubble goes away.
@@ -1095,8 +1120,9 @@ class Companion {
     this.active.setGesture(this.currentGesture);
     this.active.setMode('talk');
 
-    // Show the locally generated translation.
-    this.bubble.show(reply.line, reply.activity);
+    // Show the locally generated translation (plus any quick-action buttons).
+    const extras = this.bubbleExtras(reply);
+    this.bubble.show(reply.line, reply.activity, extras.actions, extras.delayMs);
 
     if (this.muted) return;
 

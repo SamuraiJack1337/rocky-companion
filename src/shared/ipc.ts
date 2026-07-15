@@ -103,11 +103,18 @@ export const EV = {
   VOICE_STATE: 'voice:state', // VoiceCaptureState
   /** A note was saved (voice or chat) — notebook views refresh on this. */
   NOTE_SAVED: 'notes:saved', // NoteView
+  /** Deep-link into the chat window (e.g. auto-run a reflection). */
+  CHAT_ACTION: 'chat:action', // ChatActionCommand
 } as const;
 
 /** Instruction pushed to the companion renderer's recorder. */
 export interface PttCommand {
   phase: 'start' | 'stop' | 'cancel';
+}
+
+/** Something the chat window should do on arrival (from tray/bubble/popover). */
+export interface ChatActionCommand {
+  reflect: ReflectionKind;
 }
 
 /** A newer release, ready to offer. The URL stays in main; only display data crosses. */
@@ -225,12 +232,14 @@ export interface RockyAPI {
   sendChat(messages: ChatMessage[]): Promise<ChatResult>;
   /** Canned reflection over recent notes (Stage 1c). */
   reflect(kind: ReflectionKind): Promise<ChatResult>;
-  openChat(): Promise<void>;
+  /** Open the Notes & chat window, optionally auto-running a reflection. */
+  openChat(reflect?: ReflectionKind): Promise<void>;
 
   // ── push events (main → renderer) ─────────────────────────────────────────
   onPtt(cb: (cmd: PttCommand) => void): () => void;
   onVoiceState(cb: (state: VoiceCaptureState) => void): () => void;
   onNoteSaved(cb: (note: NoteView) => void): () => void;
+  onChatAction(cb: (cmd: ChatActionCommand) => void): () => void;
   onReply(cb: (reply: RockyReply) => void): () => void;
   onCaptureIndicator(cb: () => void): () => void;
   onState(cb: (state: RockyState) => void): () => void;

@@ -32,6 +32,7 @@ import {
   showLabWindow,
   showChatWindow,
   sendToCompanion,
+  sendToChat,
   broadcast,
   hideDock,
 } from './windows';
@@ -336,6 +337,23 @@ function buildTrayMenu(): Menu {
       click: () => void voiceNotes.toggle(),
     },
     { label: 'Notes & chat…', click: () => showChatWindow() },
+    {
+      label: 'Reflect',
+      submenu: (
+        [
+          ['Summarize my notes', 'summarize'],
+          ['Find connections', 'connections'],
+          ['Questions for me', 'questions'],
+          ['Weekly reflection', 'weekly'],
+        ] as const
+      ).map(([label, kind]) => ({
+        label,
+        click: () => {
+          showChatWindow();
+          sendToChat(EV.CHAT_ACTION, { reflect: kind });
+        },
+      })),
+    },
     { type: 'separator' },
     {
       label: 'Pause',

@@ -384,12 +384,15 @@ export function farewellReply(name?: string): RockyReply {
 
 /** Push-to-talk began: Rocky raises his receivers and waits. */
 export function listeningReply(name?: string): RockyReply {
-  return ritual(
-    renderLine('Rocky listens, {name}. Speak the thought. Press again when done.', { name }),
-    'curious',
-    'listen',
-    'question',
-  );
+  return {
+    ...ritual(
+      renderLine('Rocky listens, {name}. Speak the thought. Press again when done.', { name }),
+      'curious',
+      'listen',
+      'question',
+    ),
+    kind: 'listening',
+  };
 }
 
 /** Clamp a transcript into a short quoted snippet for the confirmation line. */
@@ -400,12 +403,15 @@ export function noteSnippet(text: string, max = 60): string {
 
 /** A voice note was transcribed and stored. Echo a snippet so mishearings show. */
 export function noteSavedReply(snippet: string, name?: string): RockyReply {
-  return ritual(
-    renderLine(`Noted, {name}: “${snippet}”. Rocky keeps it.`, { name }),
-    'excited',
-    'build',
-    'complete',
-  );
+  return {
+    ...ritual(
+      renderLine(`Noted, {name}: “${snippet}”. Rocky keeps it.`, { name }),
+      'excited',
+      'build',
+      'complete',
+    ),
+    kind: 'note-saved',
+  };
 }
 
 /** The capture produced no usable words. */

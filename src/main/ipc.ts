@@ -6,7 +6,7 @@
 // here and never returned to any window.
 
 import { app, ipcMain, BrowserWindow } from 'electron';
-import { CH } from '../shared/ipc';
+import { CH, EV } from '../shared/ipc';
 import type { ConsentPayload } from '../shared/ipc';
 import type {
   ChatMessage,
@@ -28,7 +28,7 @@ import { probeOllama, validateOpenAIKey } from './providers/VisionProvider';
 import { createSpeechProvider } from './providers/SpeechProvider';
 import { synthesizeSpeech } from './tts';
 import { listSkins, loadSkin, openSkinsFolder } from './assets';
-import { showChatWindow, showLabWindow, showSettingsWindow } from './windows';
+import { sendToChat, showChatWindow, showLabWindow, showSettingsWindow } from './windows';
 import type { TtsOverrides } from '../shared/ipc';
 import type { Scheduler } from './scheduler';
 import type { FocusManager } from './focus';
@@ -205,8 +205,16 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(CH.CHAT_REFLECT, (_e, kind: ReflectionKind) =>
     reflectOnNotes(kind, store.get()),
   );
-  ipcMain.handle(CH.OPEN_CHAT, () => {
+  ipcMain.handle(CH.OPEN_CHAT, (_e, reflect?: ReflectionKind) => {
     showChatWindow();
+    if (
+      reflect === 'summarize' ||
+      reflect === 'connections' ||
+      reflect === 'questions' ||
+      reflect === 'weekly'
+    ) {
+      sendToChat(EV.CHAT_ACTION, { reflect });
+    }
   });
 
   ipcMain.handle(CH.QUIT, () => {

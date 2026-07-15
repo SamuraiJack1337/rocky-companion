@@ -195,6 +195,9 @@ body.companion {
   width: 148px;
   padding: 6px;
   box-sizing: border-box;
+  /* The stage window is only ~240px tall; cap the menu and scroll the rest. */
+  max-height: 188px;
+  overflow-y: auto;
   background:
     linear-gradient(180deg, rgba(41, 45, 43, 0.97), rgba(21, 24, 24, 0.97));
   border: 1px solid rgba(184, 158, 110, 0.54);
@@ -218,13 +221,19 @@ body.companion {
   font: inherit;
   font-size: 11px;
   text-align: left;
-  padding: 6px 8px;
+  padding: 4px 8px;
   cursor: pointer;
+  flex: none;
 }
 
 #control-popover button:hover {
   background: rgba(137, 167, 161, 0.16);
   color: #cfe2dd;
+}
+
+#control-popover button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 @media (prefers-reduced-motion: reduce) {

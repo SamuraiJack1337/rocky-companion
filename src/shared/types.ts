@@ -220,6 +220,9 @@ export interface LoadedSkin {
   assets: Record<string, string>;
 }
 
+/** Replies that the companion renderer decorates with bubble buttons. */
+export type ReplyKind = 'listening' | 'note-saved';
+
 /** A single in-character reaction from Rocky. */
 export interface RockyReply {
   line: string;
@@ -227,6 +230,8 @@ export interface RockyReply {
   activity: Activity;
   gesture: RockyGesture;
   motif: EridianMotif;
+  /** Present only on replies whose bubble carries quick-action buttons. */
+  kind?: ReplyKind;
 }
 
 export type RelationshipStage = 'first-contact' | 'colleague' | 'buddy' | 'trusted-buddy';

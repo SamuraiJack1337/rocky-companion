@@ -230,18 +230,26 @@ export function showChatWindow(): BrowserWindow {
   return chat;
 }
 
+/** Send a push event to one window, queued until its frame finishes loading. */
+function sendToWindow(target: BrowserWindow | null, channel: string, payload?: unknown): void {
+  if (!target || target.isDestroyed()) return;
+  if (target.webContents.isLoadingMainFrame()) {
+    target.webContents.once('did-finish-load', () => {
+      if (!target.isDestroyed()) target.webContents.send(channel, payload);
+    });
+  } else {
+    target.webContents.send(channel, payload);
+  }
+}
+
 /** Send a push event to the companion window only. */
 export function sendToCompanion(channel: string, payload?: unknown): void {
-  if (companion && !companion.isDestroyed()) {
-    const target = companion;
-    if (target.webContents.isLoadingMainFrame()) {
-      target.webContents.once('did-finish-load', () => {
-        if (!target.isDestroyed()) target.webContents.send(channel, payload);
-      });
-    } else {
-      target.webContents.send(channel, payload);
-    }
-  }
+  sendToWindow(companion, channel, payload);
+}
+
+/** Send a push event to the chat window (queued while it is still loading). */
+export function sendToChat(channel: string, payload?: unknown): void {
+  sendToWindow(chat, channel, payload);
 }
 
 /** Broadcast a push event to every live window (companion + any open aux windows). */
