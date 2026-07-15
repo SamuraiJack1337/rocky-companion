@@ -15,6 +15,7 @@
     "watch": "node build.mjs --dev --watch",
     "start": "electron .",
     "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
     "icon": "npm run build && electron scripts/generate-icon.mjs"
   },
   "dependencies": {

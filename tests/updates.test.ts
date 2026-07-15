@@ -18,7 +18,9 @@ interface Harness {
   settings: Settings;
 }
 
-function makeHarness(release: unknown, current = '0.1.0'): Harness {
+// Pin the platform in tests so asset selection is deterministic regardless of
+// the host the suite runs on (CI runs it on both macOS and Windows).
+function makeHarness(release: unknown, current = '0.1.0', platform: NodeJS.Platform = 'darwin'): Harness {
   const h: Harness = { checker: null as unknown as UpdateChecker, notifications: [], settings: { ...DEFAULT_SETTINGS } };
   h.checker = new UpdateChecker({
     currentVersion: current,
@@ -29,15 +31,20 @@ function makeHarness(release: unknown, current = '0.1.0'): Harness {
     },
     notify: (info) => h.notifications.push(info),
     fetchJson: async () => release,
+    platform,
   });
   return h;
 }
+
+const MAC_ASSET = 'https://github.com/owner/repo/releases/download/v0.2.0/RockyCompanion-0.2.0-mac.dmg';
+const WIN_ASSET = 'https://github.com/owner/repo/releases/download/v0.2.0/RockyCompanion-0.2.0-win.exe';
 
 const RELEASE = {
   tag_name: 'v0.2.0',
   html_url: 'https://github.com/owner/repo/releases/tag/v0.2.0',
   assets: [
-    { name: 'RockyCompanion-0.2.0-mac.dmg', browser_download_url: 'https://github.com/owner/repo/releases/download/v0.2.0/RockyCompanion-0.2.0-mac.dmg' },
+    { name: 'RockyCompanion-0.2.0-mac.dmg', browser_download_url: MAC_ASSET },
+    { name: 'RockyCompanion-0.2.0-win.exe', browser_download_url: WIN_ASSET },
   ],
 };
 
@@ -50,6 +57,18 @@ test('a newer release notifies once with the dmg url', async () => {
   // Second check in the same launch: still pending, but no second prompt.
   await h.checker.checkNow(true);
   assert.equal(h.notifications.length, 1);
+});
+
+test('on Windows the .exe asset is offered, not the .dmg', async () => {
+  const h = makeHarness(RELEASE, '0.1.0', 'win32');
+  const info = await h.checker.checkNow(true);
+  assert.equal(info?.url, WIN_ASSET);
+});
+
+test('an unknown platform falls back to the release page', async () => {
+  const h = makeHarness(RELEASE, '0.1.0', 'linux');
+  const info = await h.checker.checkNow(true);
+  assert.equal(info?.url, RELEASE.html_url);
 });
 
 test('the current or older version never prompts', async () => {

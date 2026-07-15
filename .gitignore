@@ -25,6 +25,7 @@ output/
 # but the committed app icon ships with the repo.
 build/*
 !build/icon.icns
+!build/icon.ico
 *.tsbuildinfo
 
 # Logs

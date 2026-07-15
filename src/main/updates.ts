@@ -65,6 +65,16 @@ export interface UpdateCheckerDeps {
   notify: (info: UpdateInfo) => void;
   /** Overridable fetch for tests. */
   fetchJson?: (url: string) => Promise<unknown>;
+  /** Host platform; defaults to the real one. Overridable for tests. */
+  platform?: NodeJS.Platform;
+}
+
+/** The installer file extension to prefer for a given platform. Unknown
+ *  platforms fall back to the release page (no direct asset). */
+function assetSuffixFor(platform: NodeJS.Platform): string | null {
+  if (platform === 'darwin') return '.dmg';
+  if (platform === 'win32') return '.exe';
+  return null;
 }
 
 export class UpdateChecker {
@@ -113,10 +123,15 @@ export class UpdateChecker {
     if (!version || compareVersions(version, this.deps.currentVersion) <= 0) return null;
     if (settings.dismissedUpdateVersion === version) return null;
 
-    const dmg = (release.assets ?? []).find(
-      (a) => typeof a.browser_download_url === 'string' && (a.name ?? '').endsWith('.dmg'),
-    );
-    const url = dmg?.browser_download_url ?? release.html_url ?? '';
+    // Prefer the installer that matches the running platform (.dmg on macOS,
+    // .exe on Windows); otherwise fall back to the release page.
+    const suffix = assetSuffixFor(this.deps.platform ?? process.platform);
+    const asset = suffix
+      ? (release.assets ?? []).find(
+          (a) => typeof a.browser_download_url === 'string' && (a.name ?? '').endsWith(suffix),
+        )
+      : undefined;
+    const url = asset?.browser_download_url ?? release.html_url ?? '';
     // Only ever hand the OS a GitHub URL; anything else is discarded.
     if (!url.startsWith('https://github.com/')) return null;
 

@@ -1,10 +1,14 @@
-# Build and publish an unsigned macOS DMG whenever a version tag is pushed.
+# Build and publish unsigned installers whenever a version tag is pushed:
+#   - macOS universal .dmg
+#   - Windows x64 .exe (NSIS)
 #
 #   npm version minor        # bumps package.json + creates the vX.Y.Z tag
 #   git push --follow-tags   # triggers this workflow
 #
-# The DMG lands on the tag's GitHub Release; the in-app update checker
-# (src/main/updates.ts) reads releases/latest to offer it to users.
+# Both artifacts land on the same tag's GitHub Release; the in-app update
+# checker (src/main/updates.ts) reads releases/latest and offers the asset that
+# matches the user's platform. The macOS job owns the release notes; the Windows
+# job only appends its .exe so the two never race on the release body.
 
 name: release
 
@@ -44,14 +48,14 @@ jobs:
       - run: npm run build
       - run: npx electron-builder --mac --publish never
 
-      - name: Publish release
+      - name: Publish release (macOS + notes)
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.dmg
           fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
-            ## Install
+            ## Install — macOS
 
             1. Download the `.dmg` below and open it.
             2. Drag **Rocky Companion** into **Applications** (replace the old
@@ -68,3 +72,45 @@ jobs:
             re-grant Screen Recording (toggle it **off and back on**, then
             relaunch), and click **Always Allow** on the keychain prompt so
             Rocky can read its own encrypted settings.
+
+            ## Install — Windows
+
+            1. Download the `.exe` below and run it.
+            2. The app isn't signed yet, so **SmartScreen** will warn once:
+               click **More info → Run anyway**.
+            3. Rocky lives in the system tray. Windows will ask for microphone
+               access the first time it's used; screen capture needs no prompt.
+
+  exe:
+    runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "package.json is $PKG_VERSION but the tag is $TAG_VERSION" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder --win --publish never
+
+      - name: Attach Windows installer
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.exe
+          fail_on_unmatched_files: true
