@@ -1,5 +1,6 @@
 # electron-builder configuration.
 # Build an unsigned macOS .dmg with:  npm run dist:mac
+# Build an unsigned Windows .exe with: npm run dist:win
 # Releases are produced by .github/workflows/release.yml on version tags.
 #
 # Nothing here bakes in any secret. Users supply their own key at runtime.
@@ -43,6 +44,23 @@ mac:
 dmg:
   title: Rocky Companion
   artifactName: RockyCompanion-${version}-mac.dmg
+
+# Windows. Like the mac build this ships UNSIGNED for now — SmartScreen will
+# warn once ("More info → Run anyway") until an Authenticode certificate is in
+# place. The adhoc-sign afterPack hook is a no-op off macOS, so it is harmless
+# here. No permission plist entries are needed: Windows has no TCC-style gate
+# for screen capture, and the mic prompt comes from getUserMedia at runtime.
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: RockyCompanion-${version}-win.exe
 
 # The CI workflow uploads artifacts itself; never auto-publish from a laptop.
 publish: null

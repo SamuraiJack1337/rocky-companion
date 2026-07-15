@@ -78,6 +78,19 @@ on-device. Cloud is strictly opt-in.
 
 ## Install (no terminal needed)
 
+Each release ships an unsigned **macOS** `.dmg` and a **Windows** `.exe`.
+
+### Windows
+
+Grab the latest `RockyCompanion-<version>-win.exe` from the
+[Releases](../../releases/latest) page and run it. The app isn't signed yet, so
+**SmartScreen** warns once — click **More info → Run anyway**. Rocky then lives
+in the system tray; Windows asks for microphone access the first time it's used,
+and screen capture needs no prompt. Updates are offered in a speech bubble and
+installed by downloading and running the new `.exe`.
+
+### macOS
+
 Grab the latest `RockyCompanion-<version>-mac.dmg` from the
 [Releases](../../releases/latest) page, open it, and drag **Rocky Companion**
 into **Applications** (replace the old copy when updating — your settings and
@@ -403,6 +416,8 @@ npm run dev        # build, then launch Electron (development)
 npm run build      # production build into dist/
 npm run typecheck  # tsc --noEmit (strict type checking)
 npm test           # privacy-boundary, scheduler/capture-rule, and local-host tests
+npm run dist:mac   # package an unsigned universal macOS .dmg (macOS only)
+npm run dist:win   # package an unsigned Windows x64 .exe (NSIS)
 ```
 
 > **Testing note:** the majority of end-to-end testing to date has been done
