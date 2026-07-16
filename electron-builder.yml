@@ -19,6 +19,15 @@ files:
   - dist/**/*
   - package.json
 
+# Ship the official Rocky skin inside the app. On first run main/assets.ts
+# seeds it into userData/skins so a fresh install shows the official creature
+# rather than the procedural fallback. Landing at <resources>/skins/rocky-hq/.
+extraResources:
+  - from: samples/skins
+    to: skins
+    filter:
+      - rocky-hq/**
+
 # Rocky is a menu-bar / floating companion, not a normal windowed app.
 mac:
   category: public.app-category.utilities

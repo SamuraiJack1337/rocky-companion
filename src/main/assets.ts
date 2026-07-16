@@ -116,6 +116,56 @@ export function loadSkin(name: string): LoadedSkin | null {
   return { manifest, assets };
 }
 
+/**
+ * Directory holding the skins that ship bundled with the app. In a packaged
+ * build these are copied in via electron-builder `extraResources` (to
+ * <resources>/skins). In development we read them straight from the repo's
+ * samples/skins folder, so `npm start` behaves like a real install.
+ */
+function bundledSkinsDir(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'skins')
+    : path.join(app.getAppPath(), 'samples', 'skins');
+}
+
+/**
+ * On first run, copy each bundled skin into the user's skins directory (unless
+ * a folder of that name already exists — we never clobber a user's own art).
+ * This is what makes the official Rocky skin appear on a fresh install instead
+ * of the procedural fallback. Best-effort and fully silent: any failure just
+ * leaves the procedural creature in place.
+ */
+export function seedBundledSkins(): void {
+  const source = bundledSkinsDir();
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(source, { withFileTypes: true });
+  } catch {
+    return; // nothing bundled (or not readable)
+  }
+
+  const dest = skinsDir();
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !isSafeSegment(entry.name)) continue;
+    const from = path.join(source, entry.name);
+    // Only treat a folder as a skin if it carries a manifest.
+    if (!fs.existsSync(path.join(from, 'skin.json'))) continue;
+    const to = path.join(dest, entry.name);
+    if (fs.existsSync(to)) continue; // already installed — leave user copy alone
+    try {
+      fs.cpSync(from, to, { recursive: true });
+    } catch {
+      /* skip this skin; keep going with the rest */
+    }
+  }
+}
+
 /** Open the skins directory in the OS file manager (creating it if needed). */
 export async function openSkinsFolder(): Promise<void> {
   const dir = skinsDir();

@@ -23,14 +23,16 @@ import {
   PROCEDURAL_SKIN,
 } from '../shared/types';
 import { SpokenVoice } from './spokenVoice';
+import { SystemVoice, systemVoiceAvailable } from './systemVoice';
 
 const VOICE_PITCH_MIN = -6;
 const VOICE_PITCH_MAX = 3;
 const clampPitch = (n: number): number =>
   Math.min(VOICE_PITCH_MAX, Math.max(VOICE_PITCH_MIN, Math.round(Number.isFinite(n) ? n : 0)));
 
-/** Audition player for the "Play test line" button (settings window only). */
+/** Audition players for the "Play test line" button (settings window only). */
 const auditioner = new SpokenVoice();
+const systemAuditioner = new SystemVoice();
 
 // ── Tiny typed DOM helpers ──────────────────────────────────────────────────
 
@@ -233,21 +235,37 @@ async function populateSkins(): Promise<void> {
   setStatus(skinStatus, extra > 0 ? `${extra} custom skin${extra === 1 ? '' : 's'} found.` : 'No custom skins yet.', 'muted');
 }
 
-/** Show the TTS sub-fields only in spoken mode; gate the test button on a key. */
+/** Show the OpenAI TTS sub-fields only in that mode; gate the test button. */
 function paintVoiceFields(): void {
-  ttsFields.classList.toggle('hidden', voiceMode.value !== 'openai');
-  testVoiceBtn.disabled = !keyStored || !current.ttsConsentGiven;
+  const mode = voiceMode.value;
+  // The OpenAI-specific sub-fields (key consent, voice/model, delivery style)
+  // only make sense for the cloud voice. The offline voice needs none of them.
+  ttsFields.classList.toggle('hidden', mode !== 'openai');
   // The delivery-style box only affects gpt-4o-* TTS; tts-1 / tts-1-hd ignore it.
   const styled = /gpt/i.test(ttsModel.value);
   ttsInstructions.disabled = !styled;
   ttsInstructions.style.opacity = styled ? '1' : '0.5';
 
+  if (mode === 'offline') {
+    // No key or consent needed — the OS speaks it entirely on-device.
+    testVoiceBtn.disabled = !systemVoiceAvailable();
+    setStatus(
+      voiceStatus,
+      systemVoiceAvailable()
+        ? 'Offline voice ready — uses your OS speech engine. No key needed. Save, then test the line.'
+        : 'Your system does not expose a speech engine; Rocky will use his Eridian tones instead.',
+      systemVoiceAvailable() ? 'muted' : 'warn',
+    );
+    return;
+  }
+
+  testVoiceBtn.disabled = !keyStored || !current.ttsConsentGiven;
   // Surface the two silent-voice traps up front instead of at synthesis time.
-  if (voiceMode.value === 'openai' && !ttsConsentInput.checked) {
+  if (mode === 'openai' && !ttsConsentInput.checked) {
     setStatus(voiceStatus, 'Spoken voice stays silent until you tick the consent box above and save.', 'warn');
-  } else if (voiceMode.value === 'openai' && !keyStored) {
+  } else if (mode === 'openai' && !keyStored) {
     setStatus(voiceStatus, 'Spoken voice needs an OpenAI key — save one in the Cloud section.', 'warn');
-  } else if (voiceMode.value === 'openai') {
+  } else if (mode === 'openai') {
     setStatus(voiceStatus, 'Spoken voice ready. Save, then test the line.', 'muted');
   }
 }
@@ -355,6 +373,25 @@ voicePitchNumber.addEventListener('change', () => syncPitchFrom(voicePitchNumber
 
 // Audition the chosen voice with the current (possibly unsaved) form values.
 testVoiceBtn.addEventListener('click', async () => {
+  const sampleLine = 'Buddy. You are here. I see you. We work, question?';
+
+  // Offline mode: speak the sample with the OS voice — no key, no network.
+  if (voiceMode.value === 'offline') {
+    if (!systemVoiceAvailable()) {
+      setStatus(voiceStatus, 'No system speech engine available on this device.', 'warn');
+      return;
+    }
+    testVoiceBtn.disabled = true;
+    setStatus(voiceStatus, 'Speaking…', 'muted');
+    try {
+      const ok = await systemAuditioner.speak(sampleLine, clampPitch(Number(voicePitchNumber.value)));
+      setStatus(voiceStatus, ok ? 'Played test line.' : 'Your OS voice did not respond.', ok ? 'ok' : 'warn');
+    } finally {
+      testVoiceBtn.disabled = !systemVoiceAvailable();
+    }
+    return;
+  }
+
   const overrides = {
     ttsVoice: ttsVoice.value,
     ttsModel: ttsModel.value,
@@ -533,7 +570,8 @@ saveBtn.addEventListener('click', async () => {
     updateCheckEnabled: updateCheckInput.checked,
     clickThrough: clickThroughInput.checked,
     blockedApps: readBlockedApps(),
-    voiceMode: voiceMode.value === 'openai' ? 'openai' : 'procedural',
+    voiceMode:
+      voiceMode.value === 'openai' ? 'openai' : voiceMode.value === 'offline' ? 'offline' : 'procedural',
     ttsVoice: ttsVoice.value,
     ttsModel: ttsModel.value,
     ttsConsentGiven: ttsConsentInput.checked,

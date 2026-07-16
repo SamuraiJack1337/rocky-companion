@@ -1,11 +1,12 @@
 # Creature skins — asset delivery format for Rocky Companion
 
-The folders here are complete, working **drop-in creature skins**:
+This folder holds the **official Rocky skin**, a complete drop-in creature skin:
 
-- **`rocky/`** — the official Rocky skin (multi-frame idle).
-- **`rocky-hq/`** — a higher-quality pass with a single idle still.
+- **`rocky-hq/`** — the official Rocky art (high-fidelity per-mood frames).
 
-Any skin that follows the same structure works with **zero code changes**.
+It ships bundled with the app and is seeded into your skins directory on first
+run, so a fresh install shows the official creature automatically. Any skin that
+follows the same structure works with **zero code changes**.
 
 ## How to install a skin
 

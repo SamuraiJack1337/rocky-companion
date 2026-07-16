@@ -134,8 +134,14 @@ export type RemarkStyle = 'realistic' | 'classic';
 /** Which AI backend analyzes the screenshot. Local is the private default. */
 export type ProviderKind = 'local' | 'cloud';
 
-/** How Rocky's voice is produced: procedural musical tones, or spoken TTS. */
-export type VoiceMode = 'procedural' | 'openai';
+/**
+ * How Rocky's voice is produced:
+ * - 'procedural': on-device Eridian musical tones (private, no network).
+ * - 'offline': spoken words via the OS's built-in text-to-speech (no key,
+ *   fully on-device — the right fit for the local/Ollama setup).
+ * - 'openai': spoken words via OpenAI TTS (needs a key + consent).
+ */
+export type VoiceMode = 'procedural' | 'offline' | 'openai';
 
 /**
  * OpenAI's built-in synthetic TTS voices. These are OpenAI's own designed
@@ -175,6 +181,14 @@ export const TTS_MODELS: readonly string[] = ['gpt-4o-mini-tts', 'tts-1', 'tts-1
 
 /** Identifier for the built-in procedural creature (no asset files). */
 export const PROCEDURAL_SKIN = 'procedural';
+
+/**
+ * Folder id of the official Rocky skin that ships bundled with the app (the
+ * curated high-fidelity art under samples/skins/rocky-hq). On first run it is
+ * seeded into userData/skins (see main/assets.ts) so a fresh install shows the
+ * official creature rather than the procedural fallback.
+ */
+export const OFFICIAL_SKIN = 'rocky-hq';
 
 /** Per-mood animation spec within a skin manifest. */
 export interface SkinStateSpec {
@@ -378,7 +392,10 @@ export const DEFAULT_SETTINGS: Settings = {
   voicePitch: 0,
   musicUnderlay: true,
   expressiveCadence: true,
-  creatureSkin: PROCEDURAL_SKIN,
+  // Fresh installs show the bundled official skin (seeded into userData/skins on
+  // first run). If that art is ever missing, the renderer falls back to the
+  // procedural creature, so this is always safe.
+  creatureSkin: OFFICIAL_SKIN,
   blockedApps: [],
   clickThrough: false,
   paused: false,

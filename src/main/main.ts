@@ -35,6 +35,7 @@ import {
   hideDock,
 } from './windows';
 import { registerIpc } from './ipc';
+import { seedBundledSkins } from './assets';
 import { FocusManager } from './focus';
 import { getFrontmostAppName } from './activeApp';
 import { memory } from './memory';
@@ -356,6 +357,9 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     hideDock();
+    // Install bundled skins (the official Rocky art) into userData on first run,
+    // before any window loads, so a fresh install shows the official creature.
+    seedBundledSkins();
     rebuildProvider(); // safe now that app is ready (store reads userData path)
     memory.recordLaunch();
     createTray();

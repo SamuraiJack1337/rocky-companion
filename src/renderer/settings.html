@@ -545,11 +545,14 @@
         <label class="block" for="voice-mode">How Rocky sounds</label>
         <select id="voice-mode">
           <option value="procedural">Musical tones (procedural, on-device)</option>
+          <option value="offline">Spoken voice (offline, your OS voice)</option>
           <option value="openai">Spoken voice (OpenAI TTS)</option>
         </select>
         <div class="hint">
-          Eridian chords are Rocky's primary, fully on-device voice. Optional spoken translation
-          sends only Rocky's generated line (never a screenshot) to OpenAI under your key.
+          Eridian chords are Rocky's primary, fully on-device voice. The offline spoken voice uses
+          your operating system's built-in speech — no key, nothing leaves your device (great with
+          Ollama). The OpenAI option sends only Rocky's generated line (never a screenshot) under
+          your key.
         </div>
       </div>
 

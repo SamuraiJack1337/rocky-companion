@@ -22,6 +22,7 @@ import type { Mood, RockyGesture, RockyReply, RockyState, Settings } from '../sh
 import { PROCEDURAL_SKIN } from '../shared/types';
 import { ToneVoice } from './toneVoice';
 import { SpokenVoice } from './spokenVoice';
+import { SystemVoice } from './systemVoice';
 import { SpeechBubble } from './speechBubble';
 import { SpriteSkin } from './skins';
 import type { CreatureMode, CreatureRenderer } from './skins';
@@ -809,6 +810,7 @@ class Companion {
   private readonly bubble: SpeechBubble;
   private readonly tone = new ToneVoice();
   private readonly spoken = new SpokenVoice();
+  private readonly system = new SystemVoice();
 
   private muted = false;
   private paused = false;
@@ -998,6 +1000,7 @@ class Companion {
     this.muted = muted;
     this.tone.setMuted(muted);
     this.spoken.setMuted(muted);
+    this.system.setMuted(muted);
 
     const wasPaused = this.paused;
     this.paused = paused;
@@ -1081,6 +1084,23 @@ class Companion {
         // volume just reasserts the phrase rather than doubling it.
         this.playTone(reply.motif, 1);
       }
+    } else if (this.voiceMode === 'offline') {
+      // Offline OS voice: Rocky speaks the words with the system's own TTS —
+      // no key, on-device. Optional soft chords underneath as his real
+      // language. The Web Speech API doesn't report a duration up front, so we
+      // glow across an estimate rather than awaiting the utterance.
+      if (this.musicUnderlay) this.playTone(reply.motif, 0.22);
+
+      const spoke = this.system.speak(reply.line, this.voicePitch);
+      if (!this.muted) {
+        this.active.scheduleGlowPulses(
+          glowPulsesForDuration(this.system.estimateDuration(reply.line)),
+        );
+      }
+      const ok = await spoke.catch(() => false);
+      // System voice unavailable/failed (and no underlay already played) — fall
+      // back to the full procedural tone so Rocky is never silent.
+      if (!ok && !this.musicUnderlay && !this.muted) this.playTone(reply.motif, 1);
     } else {
       // Procedural Eridian chords; glow pulses align to their onsets.
       this.playTone(reply.motif, 1);
