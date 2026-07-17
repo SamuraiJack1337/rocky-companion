@@ -5,6 +5,16 @@ faceless five-limbed Eridian engineer: an intelligent collaborator who observes
 only broad activity categories, speaks in five-part musical chords, and uses a
 compact translator to work alongside you.
 
+> ## 🧪 Preview channel: the Thinking Companion (`0.4.0-beta`)
+>
+> This build is an **opt-in preview** that layers a large new feature set on top
+> of stable Rocky — push-to-talk **voice notes**, a local **notebook**, a **chat**
+> window, and **weekly reflections**. It ships as a GitHub **pre-release**, so it
+> is deliberately **not** auto-offered to stable `0.3.x` users; grab it only if
+> you want to try the new companion features. Everything from stable Rocky
+> (offline neural voice, the Ollama connection fix, the bundled skin) is included
+> and unchanged. Expect rough edges.
+
 > ## No API key in this repo. Ever.
 >
 > **This repository contains NO API key, and it never will.** There is no shared

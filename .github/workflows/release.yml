@@ -56,7 +56,18 @@ jobs:
           files: release/*.dmg
           fail_on_unmatched_files: true
           generate_release_notes: true
+          # A tag with a prerelease suffix (e.g. v0.4.0-beta.1) is published as a
+          # GitHub *pre-release*, so it is excluded from releases/latest and the
+          # in-app updater never auto-offers it to stable users. Plain vX.Y.Z
+          # tags stay full releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
+            > ⚠️ **Preview build (Thinking Companion).** This is an opt-in
+            > pre-release with a large new feature set — voice notes, a notebook,
+            > chat, and weekly reflections — layered on top of stable Rocky.
+            > It is not offered to `0.3.x` users via auto-update. Expect rough
+            > edges; your stable install is unaffected.
+
             ## Install — macOS
 
             1. Download the `.dmg` below and open it.
@@ -118,3 +129,6 @@ jobs:
         with:
           files: release/*.exe
           fail_on_unmatched_files: true
+          # Keep the prerelease flag consistent with the macOS job, since either
+          # job may be the one that first creates the release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
