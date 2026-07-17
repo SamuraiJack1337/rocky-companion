@@ -14,7 +14,7 @@
     "dev": "node build.mjs --dev",
     "watch": "node build.mjs --dev --watch",
     "start": "electron .",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac": "npm run build && npm run fetch:piper && electron-builder --mac",
     "dist:win": "npm run build && npm run fetch:piper && electron-builder --win",
     "fetch:piper": "node scripts/fetch-piper.mjs",
     "icon": "npm run build && electron scripts/generate-icon.mjs"

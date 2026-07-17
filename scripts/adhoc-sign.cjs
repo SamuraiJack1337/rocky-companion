@@ -14,6 +14,7 @@
 // Developer ID would fix both; until then this is the minimum viable identity.
 
 const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async function adhocSign(context) {
@@ -26,6 +27,27 @@ module.exports = async function adhocSign(context) {
   if (context.appOutDir.endsWith('-temp')) return;
   const appName = context.packager.appInfo.productFilename;
   const appPath = path.join(context.appOutDir, `${appName}.app`);
+
+  // Sign inside-out. The offline-voice (sherpa-onnx) engine ships as a Mach-O
+  // binary + onnxruntime dylib under Contents/Resources/piper. The app's
+  // `--deep` sign below does NOT reach them — codesign only recurses standard
+  // nested-code locations (Frameworks, Helpers, MacOS), not arbitrary files in
+  // Resources — so an unsigned/inconsistent nested Mach-O would get
+  // Gatekeeper-killed on user Macs. Sign the dylib first, then the executable
+  // that links it, so each seal is consistent before the app is sealed over
+  // them. (No-op on Windows resources, which have no such dir.)
+  const piperDir = path.join(appPath, 'Contents', 'Resources', 'piper');
+  if (fs.existsSync(piperDir)) {
+    const nested = fs
+      .readdirSync(piperDir)
+      .filter((f) => f.endsWith('.dylib') || f === 'sherpa-onnx-offline-tts')
+      .sort((a, b) => Number(b.endsWith('.dylib')) - Number(a.endsWith('.dylib')))
+      .map((f) => path.join(piperDir, f));
+    for (const bin of nested) {
+      execFileSync('codesign', ['--force', '--sign', '-', bin], { stdio: 'inherit' });
+    }
+  }
+
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
     stdio: 'inherit',
   });

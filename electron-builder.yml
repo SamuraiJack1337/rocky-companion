@@ -41,6 +41,18 @@ mac:
   target:
     - target: dmg
       arch: universal
+  # Bundle the offline neural voice (sherpa-onnx) engine + Rocky's voice model.
+  # Fetched into vendor/ before the build by scripts/fetch-piper.mjs. The binary
+  # + its onnxruntime dylib are universal2 (arm64 + x86_64), so one copy serves
+  # both DMG slices. Lands at <resources>/piper/ (engine) and
+  # <resources>/piper/voice/ (model, tokens, espeak-ng-data); src/main/
+  # piperTts.ts resolves them there, mirroring the Windows layout. The
+  # afterPack adhoc-sign hook signs the nested binary + dylib (see that file).
+  extraResources:
+    - from: vendor/piper/mac
+      to: piper
+    - from: vendor/voices-mac
+      to: piper/voice
   # Screen Recording permission prompt copy (Info.plist).
   extendInfo:
     NSScreenCaptureUsageDescription: >-
