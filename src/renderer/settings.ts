@@ -13,7 +13,7 @@
 //   - On Save, build a Settings patch and persist it — but GUARD the switch to
 //     cloud so it requires both consent and a stored key.
 
-import type { Settings, ScreenPermissionStatus, SkinInfo } from '../shared/types';
+import type { MicPermissionStatus, Settings, ScreenPermissionStatus, SkinInfo } from '../shared/types';
 import {
   clampInterval,
   INTERVAL_MIN,
@@ -82,6 +82,7 @@ const intervalRange = el<HTMLInputElement>('interval-range');
 const intervalNumber = el<HTMLInputElement>('interval');
 const strictIntervalInput = el<HTMLInputElement>('strict-interval');
 const mutedInput = el<HTMLInputElement>('muted');
+const weeklyNudgeInput = el<HTMLInputElement>('weekly-nudge');
 const updateCheckInput = el<HTMLInputElement>('update-check');
 const clickThroughInput = el<HTMLInputElement>('click-through');
 const blockedAppsInput = el<HTMLTextAreaElement>('blocked-apps');
@@ -104,6 +105,26 @@ const creatureSkinSelect = el<HTMLSelectElement>('creature-skin');
 const openSkinsFolderBtn = el<HTMLButtonElement>('open-skins-folder');
 const refreshSkinsBtn = el<HTMLButtonElement>('refresh-skins');
 const skinStatus = el<HTMLDivElement>('skin-status');
+
+const pttShortcutInput = el<HTMLInputElement>('ptt-shortcut');
+const sttLocal = el<HTMLInputElement>('stt-local');
+const sttCloud = el<HTMLInputElement>('stt-cloud');
+const sttLocalCard = el<HTMLLabelElement>('stt-local-card');
+const sttCloudCard = el<HTMLLabelElement>('stt-cloud-card');
+const sttLocalFields = el<HTMLDivElement>('stt-local-fields');
+const sttCloudFields = el<HTMLDivElement>('stt-cloud-fields');
+const whisperCliInput = el<HTMLInputElement>('whisper-cli');
+const whisperModelInput = el<HTMLInputElement>('whisper-model');
+const sttModelSelect = el<HTMLSelectElement>('stt-model');
+const notesCloudConsentInput = el<HTMLInputElement>('notes-cloud-consent');
+const ollamaChatModelInput = el<HTMLInputElement>('ollama-chat-model');
+const ollamaEmbedModelInput = el<HTMLInputElement>('ollama-embed-model');
+const openaiEmbedModelInput = el<HTMLInputElement>('openai-embed-model');
+const checkSpeechBtn = el<HTMLButtonElement>('check-speech');
+const speechStatus = el<HTMLDivElement>('speech-status');
+const micStatus = el<HTMLDivElement>('mic-status');
+const requestMicBtn = el<HTMLButtonElement>('request-mic');
+const recheckMicBtn = el<HTMLButtonElement>('recheck-mic');
 
 const screenStatus = el<HTMLDivElement>('screen-status');
 const openScreenBtn = el<HTMLButtonElement>('open-screen-settings');
@@ -136,6 +157,14 @@ function paintProviderCards(): void {
 function paintRemarkCards(): void {
   remarkRealisticCard.classList.toggle('selected', remarkRealistic.checked);
   remarkClassicCard.classList.toggle('selected', remarkClassic.checked);
+}
+
+/** Reflect the chosen speech backend into its cards and sub-field visibility. */
+function paintSttCards(): void {
+  sttLocalCard.classList.toggle('selected', sttLocal.checked);
+  sttCloudCard.classList.toggle('selected', sttCloud.checked);
+  sttLocalFields.classList.toggle('hidden', !sttLocal.checked);
+  sttCloudFields.classList.toggle('hidden', !sttCloud.checked);
 }
 
 // ── Cloud key status ─────────────────────────────────────────────────────────
@@ -192,6 +221,7 @@ function applySettings(s: Settings): void {
   strictIntervalInput.checked = s.strictInterval;
 
   mutedInput.checked = s.muted;
+  weeklyNudgeInput.checked = s.weeklyReflectionNudge;
   updateCheckInput.checked = s.updateCheckEnabled;
   clickThroughInput.checked = s.clickThrough;
   blockedAppsInput.value = s.blockedApps.join('\n');
@@ -210,6 +240,18 @@ function applySettings(s: Settings): void {
   // Selecting only sticks if the option exists; populateSkins() runs on init.
   creatureSkinSelect.value = s.creatureSkin;
   paintVoiceFields();
+
+  pttShortcutInput.value = s.pushToTalkShortcut;
+  sttLocal.checked = s.speechProvider === 'local';
+  sttCloud.checked = s.speechProvider === 'cloud';
+  whisperCliInput.value = s.whisperCliPath;
+  whisperModelInput.value = s.whisperModelPath;
+  sttModelSelect.value = s.sttModel;
+  notesCloudConsentInput.checked = s.notesCloudConsentGiven;
+  ollamaChatModelInput.value = s.ollamaChatModel;
+  ollamaEmbedModelInput.value = s.ollamaEmbedModel;
+  openaiEmbedModelInput.value = s.openaiEmbedModel;
+  paintSttCards();
 
   applyingSettings = false;
 }
@@ -295,6 +337,70 @@ function paintBlockedAppsStatus(): void {
     count === 0 ? 'muted' : 'ok',
   );
 }
+
+// ── Microphone permission + speech setup ────────────────────────────────────
+
+function paintMicPermission(status: MicPermissionStatus): void {
+  if (status === 'granted') {
+    setStatus(micStatus, 'Granted — push-to-talk can hear you.', 'ok');
+    requestMicBtn.classList.add('hidden');
+    return;
+  }
+  const label: Record<Exclude<MicPermissionStatus, 'granted'>, string> = {
+    denied: 'Denied — enable Rocky under System Settings → Privacy & Security → Microphone.',
+    restricted: 'Restricted by system policy.',
+    'not-determined': 'Not yet requested — macOS will ask on first use.',
+    unknown: 'Permission state unknown.',
+  };
+  setStatus(micStatus, label[status], status === 'denied' ? 'err' : 'warn');
+  requestMicBtn.classList.remove('hidden');
+}
+
+async function refreshMicPermission(): Promise<void> {
+  setStatus(micStatus, 'Checking…', 'muted');
+  try {
+    paintMicPermission(await window.rocky.checkMicPermission());
+  } catch {
+    paintMicPermission('unknown');
+  }
+}
+
+requestMicBtn.addEventListener('click', async () => {
+  requestMicBtn.disabled = true;
+  try {
+    paintMicPermission(await window.rocky.requestMicPermission());
+  } finally {
+    requestMicBtn.disabled = false;
+  }
+});
+recheckMicBtn.addEventListener('click', () => void refreshMicPermission());
+
+// Probe whichever STT backend the SAVED settings select (probe follows Save).
+checkSpeechBtn.addEventListener('click', async () => {
+  checkSpeechBtn.disabled = true;
+  setStatus(speechStatus, 'Checking speech setup…', 'muted');
+  try {
+    const result = await window.rocky.checkSpeechSetup();
+    if (result.ok) {
+      setStatus(
+        speechStatus,
+        result.provider === 'local'
+          ? 'Local whisper.cpp is ready. Good.'
+          : 'Cloud transcription is ready. Good.',
+        'ok',
+      );
+    } else {
+      setStatus(speechStatus, result.error ?? 'Speech setup is not ready.', 'err');
+    }
+  } catch {
+    setStatus(speechStatus, 'Check failed.', 'err');
+  } finally {
+    checkSpeechBtn.disabled = false;
+  }
+});
+
+sttLocal.addEventListener('change', paintSttCards);
+sttCloud.addEventListener('change', paintSttCards);
 
 // ── Screen Recording permission ──────────────────────────────────────────────
 
@@ -561,6 +667,19 @@ saveBtn.addEventListener('click', async () => {
     }
   }
 
+  // GUARD: cloud speech-to-text sends note audio to OpenAI — it requires the
+  // separate notes-cloud consent AND a stored key (mirrors the vision guard).
+  if (sttCloud.checked) {
+    if (!notesCloudConsentInput.checked) {
+      setStatus(saveStatus, 'To use cloud speech-to-text, tick the notes-cloud consent first.', 'err');
+      return;
+    }
+    if (!keyStored) {
+      setStatus(saveStatus, 'To use cloud speech-to-text, save a valid OpenAI key first.', 'err');
+      return;
+    }
+  }
+
   // Build the patch from the current form. Interval is clamped defensively.
   const patch: Partial<Settings> = {
     provider: wantsCloud ? 'cloud' : 'local',
@@ -573,6 +692,7 @@ saveBtn.addEventListener('click', async () => {
     intervalMinutes: clampInterval(Number(intervalNumber.value)),
     strictInterval: strictIntervalInput.checked,
     muted: mutedInput.checked,
+    weeklyReflectionNudge: weeklyNudgeInput.checked,
     updateCheckEnabled: updateCheckInput.checked,
     clickThrough: clickThroughInput.checked,
     blockedApps: readBlockedApps(),
@@ -586,6 +706,15 @@ saveBtn.addEventListener('click', async () => {
     musicUnderlay: musicUnderlayInput.checked,
     expressiveCadence: expressiveCadenceInput.checked,
     creatureSkin: creatureSkinSelect.value || PROCEDURAL_SKIN,
+    pushToTalkShortcut: pttShortcutInput.value.trim() || DEFAULT_SETTINGS.pushToTalkShortcut,
+    speechProvider: sttCloud.checked ? 'cloud' : 'local',
+    whisperCliPath: whisperCliInput.value.trim() || DEFAULT_SETTINGS.whisperCliPath,
+    whisperModelPath: whisperModelInput.value.trim(),
+    sttModel: sttModelSelect.value,
+    notesCloudConsentGiven: notesCloudConsentInput.checked,
+    ollamaChatModel: ollamaChatModelInput.value.trim(),
+    ollamaEmbedModel: ollamaEmbedModelInput.value.trim() || DEFAULT_SETTINGS.ollamaEmbedModel,
+    openaiEmbedModel: openaiEmbedModelInput.value.trim() || DEFAULT_SETTINGS.openaiEmbedModel,
   };
 
   saveBtn.disabled = true;
@@ -625,7 +754,7 @@ async function init(): Promise<void> {
   });
 
   // Independent async probes.
-  await Promise.all([refreshKeyStored(), refreshScreenPermission()]);
+  await Promise.all([refreshKeyStored(), refreshScreenPermission(), refreshMicPermission()]);
 
   // Reflect the clamp range into the inputs (belt-and-suspenders vs. HTML attrs).
   intervalRange.min = String(INTERVAL_MIN);

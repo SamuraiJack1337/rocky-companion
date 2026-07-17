@@ -474,6 +474,18 @@
 
       <div class="field">
         <label class="row">
+          <input type="checkbox" id="weekly-nudge" />
+          <span>Offer a weekly reflection on my notes</span>
+        </label>
+        <div class="hint">
+          On Friday afternoons, if you captured 3+ notes that week, Rocky offers a weekly
+          reflection (a bubble with Reflect now / Later). The check is entirely local; the
+          reflection itself only runs if you accept.
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="row">
           <input type="checkbox" id="update-check" />
           <span>Tell me about new versions</span>
         </label>
@@ -629,6 +641,113 @@
         <div class="field">
           <button id="test-voice">Play test line</button>
           <div class="status muted" id="voice-status">Save cloud-voice consent before testing.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Notes & voice input (Stage 1) ──────────────────────────────────── -->
+    <section class="section">
+      <h2>Notes &amp; voice input</h2>
+      <div class="hint" style="margin-bottom: 12px">
+        Press the push-to-talk shortcut anywhere to speak a thought; Rocky transcribes it into
+        his local notebook (<code>notes.json</code> in your user folder) and you can discuss
+        your notes in <strong>Notes &amp; chat</strong> from the tray. Notes are yours: audio
+        is transcribed and discarded, and nothing is sent to any cloud without the separate
+        consent below.
+      </div>
+
+      <div class="field">
+        <label class="block" for="ptt-shortcut">Push-to-talk shortcut</label>
+        <input type="text" id="ptt-shortcut" spellcheck="false" autocomplete="off" placeholder="CommandOrControl+Shift+Space" />
+        <div class="hint">
+          Electron accelerator format, e.g. <code>CommandOrControl+Shift+Space</code> or
+          <code>Alt+Shift+R</code>. Press once to start listening, again to stop and save.
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="block">Speech-to-text</label>
+        <div class="radio-group" id="stt-group">
+          <label class="radio-card" id="stt-local-card">
+            <span class="inline" style="gap: 9px">
+              <input type="radio" name="stt-provider" id="stt-local" value="local" />
+              <span class="title">Local (whisper.cpp)</span>
+            </span>
+            <span class="tag">private, on-device</span>
+          </label>
+          <label class="radio-card" id="stt-cloud-card">
+            <span class="inline" style="gap: 9px">
+              <input type="radio" name="stt-provider" id="stt-cloud" value="cloud" />
+              <span class="title">Cloud (OpenAI)</span>
+            </span>
+            <span class="tag">sends note audio to OpenAI</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="stt-local-fields">
+        <div class="field">
+          <label class="block" for="whisper-cli">whisper-cli path</label>
+          <input type="text" id="whisper-cli" spellcheck="false" autocomplete="off" placeholder="whisper-cli" />
+          <div class="hint">Install with <code>brew install whisper-cpp</code>; a bare name is searched on PATH and the Homebrew locations.</div>
+        </div>
+        <div class="field">
+          <label class="block" for="whisper-model">Whisper model file</label>
+          <input type="text" id="whisper-model" spellcheck="false" autocomplete="off" placeholder="/path/to/ggml-base.en.bin" />
+          <div class="hint">Download a ggml model (e.g. <code>ggml-base.en.bin</code>) from the whisper.cpp models page and point this at the file.</div>
+        </div>
+      </div>
+
+      <div id="stt-cloud-fields">
+        <div class="field">
+          <label class="block" for="stt-model">Transcription model</label>
+          <select id="stt-model">
+            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
+            <option value="gpt-4o-transcribe">gpt-4o-transcribe</option>
+            <option value="whisper-1">whisper-1</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="disclosure">
+        <strong>Cloud notes:</strong> with the consent below, your note <strong>audio</strong>
+        (cloud speech-to-text) and note <strong>text</strong> (chat about notes, embeddings —
+        when the cloud provider is selected) are sent to <strong>OpenAI</strong> under your own
+        key. Keep everything local by using whisper.cpp and Ollama.
+      </div>
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="notes-cloud-consent" />
+          <span>I agree to send note audio/text to OpenAI when a cloud option is selected</span>
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="block" for="ollama-chat-model">Ollama chat model</label>
+        <input type="text" id="ollama-chat-model" spellcheck="false" autocomplete="off" placeholder="empty = use the vision model" />
+        <div class="hint">Used for the Notes &amp; chat conversation when the provider is Local. A text model like <code>llama3.2</code> answers faster than a vision model.</div>
+      </div>
+      <div class="field">
+        <label class="block" for="ollama-embed-model">Ollama embedding model</label>
+        <input type="text" id="ollama-embed-model" spellcheck="false" autocomplete="off" placeholder="nomic-embed-text" />
+        <div class="hint"><code>ollama pull nomic-embed-text</code> — used to find related notes. Without it, retrieval falls back to keyword matching.</div>
+      </div>
+      <div class="field">
+        <label class="block" for="openai-embed-model">OpenAI embedding model</label>
+        <input type="text" id="openai-embed-model" spellcheck="false" autocomplete="off" placeholder="text-embedding-3-small" />
+      </div>
+
+      <div class="field">
+        <button id="check-speech">Check speech setup</button>
+        <div class="status muted" id="speech-status"></div>
+      </div>
+
+      <div class="field">
+        <label class="block">Microphone permission</label>
+        <div class="status muted" id="mic-status">Checking…</div>
+        <div class="inline" style="margin-top: 8px">
+          <button id="request-mic" class="hidden">Enable microphone</button>
+          <button id="recheck-mic">Re-check</button>
         </div>
       </div>
     </section>

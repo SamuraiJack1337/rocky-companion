@@ -9,7 +9,7 @@
 // Runs with contextIsolation on: everything goes through the typed
 // `window.rocky` bridge; all these channels already exist for the Lab window.
 
-import type { FocusState, Settings } from '../shared/types';
+import type { FocusState, Settings, VoiceCaptureState } from '../shared/types';
 
 const DEFAULT_FOCUS_MINUTES = 25;
 
@@ -18,8 +18,10 @@ export class ControlPopover {
   private readonly popover: HTMLDivElement;
   private readonly focusBtn: HTMLButtonElement;
   private readonly muteBtn: HTMLButtonElement;
+  private readonly talkBtn: HTMLButtonElement;
 
   private muted = false;
+  private voiceState: VoiceCaptureState = 'idle';
   private focusState: FocusState = {
     active: false,
     startedAt: null,
@@ -32,6 +34,7 @@ export class ControlPopover {
     this.popover = mustGet<HTMLDivElement>('control-popover');
     this.focusBtn = mustGet<HTMLButtonElement>('ctl-focus');
     this.muteBtn = mustGet<HTMLButtonElement>('ctl-mute');
+    this.talkBtn = mustGet<HTMLButtonElement>('ctl-talk');
 
     this.toggle.addEventListener('click', () => this.setOpen(this.popover.hidden));
     window.addEventListener('blur', () => this.setOpen(false));
@@ -59,6 +62,19 @@ export class ControlPopover {
   }
 
   private wireActions(): void {
+    // Voice notes + the notebook, reachable straight from Rocky's stage.
+    this.talkBtn.addEventListener('click', () =>
+      this.act(() => window.rocky.togglePushToTalk()),
+    );
+    mustGet<HTMLButtonElement>('ctl-chat').addEventListener('click', () =>
+      this.act(() => window.rocky.openChat()),
+    );
+    mustGet<HTMLButtonElement>('ctl-weekly').addEventListener('click', () =>
+      this.act(() => window.rocky.openChat('weekly')),
+    );
+    mustGet<HTMLButtonElement>('ctl-questions').addEventListener('click', () =>
+      this.act(() => window.rocky.openChat('questions')),
+    );
     mustGet<HTMLButtonElement>('ctl-look').addEventListener('click', () =>
       this.act(() => window.rocky.lookNow()),
     );
@@ -84,6 +100,10 @@ export class ControlPopover {
   }
 
   private subscribe(): void {
+    window.rocky.onVoiceState((state: VoiceCaptureState) => {
+      this.voiceState = state;
+      this.paint();
+    });
     window.rocky.onFocusState((state: FocusState) => {
       this.focusState = state;
       this.paint();
@@ -117,6 +137,13 @@ export class ControlPopover {
       ? `End focus (${this.focusState.durationMinutes} min)`
       : `Focus ${DEFAULT_FOCUS_MINUTES} min`;
     this.muteBtn.textContent = this.muted ? 'Unmute voice' : 'Mute voice';
+    this.talkBtn.textContent =
+      this.voiceState === 'recording'
+        ? 'Stop & save note'
+        : this.voiceState === 'processing'
+          ? 'Translating…'
+          : 'Talk (voice note)';
+    this.talkBtn.disabled = this.voiceState === 'processing';
   }
 }
 

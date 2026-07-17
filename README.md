@@ -341,6 +341,48 @@ still feels alive. Skin images are read by the main process and handed to the
 renderer in-memory; the renderer never reads the filesystem. (Only original or
 properly licensed art should be placed here.)
 
+### Rocky Notes — voice notes + conversation (Stage 1)
+
+Rocky is also a thinking companion: speak a thought, he keeps it, and later you
+can talk with him about your own notes.
+
+- **Push-to-talk voice notes.** Press the global shortcut (default
+  **⌘⇧Space**, configurable in Settings) anywhere, speak, press again. You can
+  also **press-and-hold Rocky himself** to start/stop a note, or use **Talk
+  (voice note)** in his quick-controls popover. Rocky transcribes the recording
+  into his notebook and confirms out loud with a snippet, so a mishearing is
+  immediately visible. The microphone is live only between your two presses;
+  audio is transcribed **in memory and discarded** (never stored).
+- **Notebook.** Notes live in a local, owner-only file
+  (`notes.json` under the app's user folder). Open **Notes & chat…** from the
+  tray (or Rocky's popover) to read, add, or delete them — including **Delete
+  all**. Each note has a **Discuss** button that jumps into the chat seeded
+  with that note, and notes are auto-tagged with 1–3 coarse **topics** you can
+  filter by (tagging is local/best-effort — untagged notes are fine).
+- **Talk about your notes.** The chat tab answers questions like *"what did I
+  say about that project?"* using retrieval over your own notes (embeddings
+  when available, keyword search otherwise), in Rocky's voice. Reflection
+  buttons ask for a summary, cross-note connections, follow-up questions, or a
+  weekly reflection — also reachable from Rocky's popover and the tray's
+  **Reflect** submenu. Conversations are **in-memory only** — closing the
+  window forgets the chat; only notes persist.
+- **Weekly reflection nudge.** On Friday afternoons, if you captured 3+ notes
+  that week, Rocky offers a weekly reflection in a speech bubble with **Reflect
+  now / Later** buttons. The check is entirely local and throttled to once a
+  week; the reflection itself runs only if you accept. Turn it off in Settings.
+- **Speech-to-text, local by default.** The default backend is
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+  (`brew install whisper-cpp`, plus a ggml model file you point Settings at) —
+  fully on-device. The optional **Cloud (OpenAI)** backend transcribes with
+  your own key and is gated behind a **separate notes-cloud consent**.
+  (One caveat for the local path: `whisper-cli` reads from a file, so the
+  recording is written to a transient owner-only temp file and deleted right
+  after transcription.)
+- **Chat + retrieval follow your vision provider.** Local (Ollama) chats with
+  `ollamaChatModel` (or your vision model) and embeds with `nomic-embed-text`;
+  Cloud (OpenAI) is used only when you have given the notes-cloud consent —
+  note **text** is exactly what gets sent, so it has its own switch.
+
 ### Rocky Lab
 
 Open **Rocky Lab…** from the tray for the interactive companion tools:
@@ -371,6 +413,10 @@ The menu-bar (tray) icon gives you quick access to:
 - **Start 25 min focus / Focus (active)** — start a focus-watch session, or
   cancel the one in progress.
 - **Fist bump** — trigger the shared completion ritual.
+- **Talk to Rocky (voice note)** — start/stop a push-to-talk note (same as the shortcut).
+- **Notes & chat…** — open the notebook and the conversation window.
+- **Reflect ▸** — submenu to open the chat and auto-run a summary, connections,
+  questions, or a weekly reflection over your notes.
 - **Rocky Lab…** — open focus, engineering, and relationship tools.
 - **Settings…** — open the full settings window.
 - **Quit** — exit the app.
@@ -472,6 +518,16 @@ a passive observer.
   display name.
 - **Relationship memory contains counters and timestamps only** and can be reset
   from Rocky Lab.
+- **Notes are the one thing Rocky persists that you author** — always
+  user-initiated (push-to-talk or typed), stored in a local owner-only file,
+  deletable one-by-one or all at once. Voice-note **audio is never stored**:
+  it is transcribed and discarded (the local whisper.cpp path uses a transient
+  owner-only temp file, removed immediately after).
+- **Note data never reaches a cloud without its own consent** — cloud
+  speech-to-text, chat about notes, and cloud embeddings are all gated behind
+  a separate notes-cloud opt-in, independent of the screenshot consent.
+- **The microphone is live only during a push-to-talk capture** (between your
+  two presses), with Rocky visibly in his listening pose.
 
 ---
 

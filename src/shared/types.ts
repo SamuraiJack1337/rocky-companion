@@ -234,6 +234,9 @@ export interface LoadedSkin {
   assets: Record<string, string>;
 }
 
+/** Replies that the companion renderer decorates with bubble buttons. */
+export type ReplyKind = 'listening' | 'note-saved' | 'weekly-offer';
+
 /** A single in-character reaction from Rocky. */
 export interface RockyReply {
   line: string;
@@ -241,6 +244,8 @@ export interface RockyReply {
   activity: Activity;
   gesture: RockyGesture;
   motif: EridianMotif;
+  /** Present only on replies whose bubble carries quick-action buttons. */
+  kind?: ReplyKind;
 }
 
 export type RelationshipStage = 'first-contact' | 'colleague' | 'buddy' | 'trusted-buddy';
@@ -367,6 +372,34 @@ export interface Settings {
   cloudConsentGiven: boolean;
   /** Last on-screen window position (persisted across launches). */
   windowPosition: { x: number; y: number } | null;
+
+  // ── Notes + voice input (Stage 1) ─────────────────────────────────────────
+  /** Speech-to-text backend: 'local' (whisper.cpp CLI) or 'cloud' (OpenAI). */
+  speechProvider: ProviderKind;
+  /** Path or command name of the whisper.cpp CLI (e.g. from `brew install whisper-cpp`). */
+  whisperCliPath: string;
+  /** Path to a ggml/gguf Whisper model file (e.g. ggml-base.en.bin). Required for local STT. */
+  whisperModelPath: string;
+  /** OpenAI transcription model (cloud STT). */
+  sttModel: string;
+  /**
+   * Separate explicit opt-in required before ANY note data (voice audio, note
+   * text, chat about notes, embeddings) is sent to OpenAI. Without it, the
+   * cloud paths for notes fall back to local or fail gracefully.
+   */
+  notesCloudConsentGiven: boolean;
+  /** Global push-to-talk accelerator (toggle: press to record, press to stop). */
+  pushToTalkShortcut: string;
+  /** Ollama model for chat about notes. Empty = reuse ollamaModel. */
+  ollamaChatModel: string;
+  /** Ollama embedding model for note retrieval. */
+  ollamaEmbedModel: string;
+  /** OpenAI embedding model for note retrieval (cloud, consent-gated). */
+  openaiEmbedModel: string;
+  /** Rocky may offer a weekly reflection (Friday afternoon, 3+ notes that week). */
+  weeklyReflectionNudge: boolean;
+  /** ISO timestamp of the last weekly-reflection offer (rate limiting). */
+  lastWeeklyNudgeISO: string | null;
 }
 
 export const INTERVAL_MIN = 1;
@@ -407,7 +440,95 @@ export const DEFAULT_SETTINGS: Settings = {
   consentGiven: false,
   cloudConsentGiven: false,
   windowPosition: null,
+  speechProvider: 'local',
+  whisperCliPath: 'whisper-cli',
+  whisperModelPath: '',
+  sttModel: 'gpt-4o-mini-transcribe',
+  notesCloudConsentGiven: false,
+  pushToTalkShortcut: 'CommandOrControl+Shift+Space',
+  ollamaChatModel: '',
+  ollamaEmbedModel: 'nomic-embed-text',
+  openaiEmbedModel: 'text-embedding-3-small',
+  weeklyReflectionNudge: true,
+  lastWeeklyNudgeISO: null,
 };
+
+// ── Notes + conversation (Stage 1: thinking companion) ───────────────────────
+// Notes are the FIRST user content Rocky ever persists. They are always
+// user-initiated (push-to-talk or typed in the chat window), stored locally in
+// userData/notes.json, and only ever leave the device when the user has both
+// selected the cloud provider AND given the separate notes-cloud consent.
+
+/** How a note was captured. */
+export type NoteSource = 'voice' | 'chat';
+
+/** A note as exposed to the renderer — never includes the embedding vector. */
+export interface NoteView {
+  id: string;
+  /** ISO timestamp of capture. */
+  createdAt: string;
+  text: string;
+  source: NoteSource;
+  /** 1-3 coarse topic tags, suggested by the model after save (best-effort). */
+  topics?: string[];
+}
+
+/** Longest note text we accept (clamped at save time). */
+export const NOTE_MAX_LENGTH = 4000;
+
+export type ChatRole = 'user' | 'rocky';
+
+/** One turn of the chat-window conversation (kept in-memory only, renderer-side). */
+export interface ChatMessage {
+  role: ChatRole;
+  text: string;
+}
+
+/** Result of a chat or reflection request. Errors are in-character lines. */
+export interface ChatResult {
+  ok: boolean;
+  reply?: string;
+  /** Notes whose text was shown to the model for this reply (for the UI). */
+  usedNotes?: NoteView[];
+  error?: string;
+}
+
+/** The canned reflection actions in the chat window (Stage 1c). */
+export type ReflectionKind = 'summarize' | 'connections' | 'questions' | 'weekly';
+
+/** Result of transcribing captured audio. */
+export interface TranscriptionResult {
+  ok: boolean;
+  text?: string;
+  error?: string;
+}
+
+/** Result of saving a voice note (transcribe + store). */
+export interface VoiceNoteResult {
+  ok: boolean;
+  note?: NoteView;
+  error?: string;
+}
+
+/** Push-to-talk lifecycle, mirrored to windows so UI can reflect it. */
+export type VoiceCaptureState = 'idle' | 'recording' | 'processing';
+
+/** Readiness of the configured speech-to-text backend (for Settings). */
+export interface SpeechSetupStatus {
+  ok: boolean;
+  provider: ProviderKind;
+  error?: string;
+}
+
+/** macOS Microphone permission state (same vocabulary as screen recording). */
+export type MicPermissionStatus = ScreenPermissionStatus;
+
+/** Cloud STT models selectable in Settings. */
+export const STT_MODELS: readonly string[] = [
+  'gpt-4o-mini-transcribe',
+  'gpt-4o-transcribe',
+  'whisper-1',
+];
 
 /** Result of probing the local Ollama server. */
 export interface OllamaStatus {

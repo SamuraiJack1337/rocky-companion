@@ -48,9 +48,11 @@ export class SpeechBubble {
    * Show a line: set the text, reveal the bubble, and schedule auto-dismiss
    * after a readable delay. Re-showing cancels any pending dismiss timer.
    * Optional actions render as buttons and stretch the delay so the user can
-   * actually decide; clicking any action dismisses the bubble.
+   * actually decide; clicking any action dismisses the bubble. `delayMs`
+   * overrides the auto-dismiss delay entirely (e.g. a bubble that must stay
+   * up for a whole voice-note recording).
    */
-  show(line: string, activity = 'signal', actions?: BubbleAction[]): void {
+  show(line: string, activity = 'signal', actions?: BubbleAction[], delayMs?: number): void {
     if (!this.root) return;
 
     if (this.textNode) {
@@ -69,7 +71,7 @@ export class SpeechBubble {
       // Auto-dismiss: hide and notify listeners (no early-click backend call).
       this.hide();
       this.dismissCb?.();
-    }, actions?.length ? ACTIONABLE_DELAY_MS : readableDelay(line));
+    }, delayMs ?? (actions?.length ? ACTIONABLE_DELAY_MS : readableDelay(line)));
   }
 
   /** Hide the bubble and clear any pending auto-dismiss timer. */

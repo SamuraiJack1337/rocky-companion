@@ -24,9 +24,11 @@ import { ToneVoice } from './toneVoice';
 import { SpokenVoice } from './spokenVoice';
 import { SystemVoice } from './systemVoice';
 import { SpeechBubble } from './speechBubble';
+import type { BubbleAction } from './speechBubble';
 import { SpriteSkin } from './skins';
 import type { CreatureMode, CreatureRenderer } from './skins';
 import { installControls } from './controls';
+import { VoiceRecorder } from './recorder';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -811,6 +813,8 @@ class Companion {
   private readonly tone = new ToneVoice();
   private readonly spoken = new SpokenVoice();
   private readonly system = new SystemVoice();
+  /** Push-to-talk microphone capture (started/stopped by main via EV.PTT). */
+  private readonly recorder = new VoiceRecorder();
 
   private muted = false;
   private paused = false;
@@ -890,22 +894,45 @@ class Companion {
   private installPointer(): void {
     const CLICK_SLOP_PX = 4;
     const CLICK_MAX_MS = 600;
+    /** Holding Rocky without moving this long starts/stops a voice note. */
+    const LONG_PRESS_MS = 550;
     let down = false;
     let dragging = false;
+    let longPressed = false;
     let downX = 0;
     let downY = 0;
     let downAt = 0;
+    let pressTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearPressTimer = () => {
+      if (pressTimer !== null) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
 
     this.canvas.addEventListener('pointerdown', (e: PointerEvent) => {
       if (e.button !== 0) return;
       down = true;
       dragging = false;
+      longPressed = false;
       downX = e.screenX;
       downY = e.screenY;
       downAt = performance.now();
       // Capture so we keep receiving moves even if the cursor briefly outruns
       // the window while it is being repositioned.
       this.canvas.setPointerCapture(e.pointerId);
+      // Long-press = push-to-talk, so capturing a thought is one physical
+      // gesture on Rocky himself (a press that drags or releases early still
+      // means move / look).
+      clearPressTimer();
+      pressTimer = setTimeout(() => {
+        pressTimer = null;
+        if (!down || dragging) return;
+        longPressed = true;
+        this.active.flash(0.7);
+        void window.rocky.togglePushToTalk();
+      }, LONG_PRESS_MS);
     });
 
     this.canvas.addEventListener('pointermove', (e: PointerEvent) => {
@@ -913,6 +940,8 @@ class Companion {
       const dx = e.screenX - downX;
       const dy = e.screenY - downY;
       if (!dragging && Math.hypot(dx, dy) > CLICK_SLOP_PX) {
+        clearPressTimer();
+        if (longPressed) return; // recording started; a late wobble is not a drag
         dragging = true;
         this.canvas.classList.add('dragging');
         window.rocky.beginWindowDrag();
@@ -923,9 +952,13 @@ class Companion {
     const end = () => {
       if (!down) return;
       down = false;
+      clearPressTimer();
       this.canvas.classList.remove('dragging');
-      if (!dragging && performance.now() - downAt <= CLICK_MAX_MS) this.pokeLook();
+      if (!dragging && !longPressed && performance.now() - downAt <= CLICK_MAX_MS) {
+        this.pokeLook();
+      }
       dragging = false;
+      longPressed = false;
     };
     this.canvas.addEventListener('pointerup', end);
     this.canvas.addEventListener('pointercancel', end);
@@ -1038,6 +1071,10 @@ class Companion {
       void this.applySkin(s.creatureSkin);
     });
 
+    // Push-to-talk: main drives the recorder lifecycle; the audio itself never
+    // leaves this renderer except as the in-memory WAV handed back to main.
+    window.rocky.onPtt((cmd) => void this.handlePtt(cmd.phase));
+
     // A newer release exists: Rocky offers it with Fetch / Later buttons.
     window.rocky.onUpdateAvailable((update) => {
       this.pendingRestMode = 'curious';
@@ -1051,6 +1088,70 @@ class Companion {
     });
   }
 
+  /** Drive the push-to-talk recorder on main's command. */
+  private async handlePtt(phase: 'start' | 'stop' | 'cancel'): Promise<void> {
+    if (phase === 'start') {
+      try {
+        await this.recorder.start();
+        // Hold the listening posture while the mic is live.
+        this.currentGesture = 'listen';
+        this.active.setGesture(this.currentGesture);
+        this.active.setMode('curious');
+      } catch {
+        // Mic denied/unavailable at the OS level — tell main to reset.
+        window.rocky.cancelVoiceNote('mic-failed');
+      }
+      return;
+    }
+    if (phase === 'cancel') {
+      this.recorder.cancel();
+      return;
+    }
+    // stop → hand the audio to main (transcribe + save happen there).
+    try {
+      const wav = await this.recorder.stop();
+      if (!wav) {
+        window.rocky.cancelVoiceNote('no-audio');
+        return;
+      }
+      await window.rocky.submitVoiceNote(wav);
+    } catch {
+      window.rocky.cancelVoiceNote('capture-failed');
+    }
+  }
+
+  /**
+   * Bubble quick-actions for special reply kinds, so voice notes and the
+   * notebook are reachable straight from Rocky himself.
+   */
+  private bubbleExtras(reply: RockyReply): { actions?: BubbleAction[]; delayMs?: number } {
+    if (reply.kind === 'listening') {
+      return {
+        actions: [
+          { label: 'Save note', onClick: () => void window.rocky.togglePushToTalk() },
+          { label: 'Cancel', onClick: () => window.rocky.cancelVoiceNote() },
+        ],
+        // Stay up for the whole possible recording window (main caps at 2 min).
+        delayMs: 130_000,
+      };
+    }
+    if (reply.kind === 'note-saved') {
+      return {
+        actions: [{ label: 'Notes & chat…', onClick: () => void window.rocky.openChat() }],
+        delayMs: 12_000,
+      };
+    }
+    if (reply.kind === 'weekly-offer') {
+      return {
+        actions: [
+          { label: 'Reflect now', onClick: () => void window.rocky.openChat('weekly') },
+          { label: 'Later', onClick: () => undefined },
+        ],
+      };
+    }
+    return {};
+  }
+
   /** Handle an incoming reply: animate, show the bubble, and voice the line. */
   private async handleReply(reply: RockyReply): Promise<void> {
     // Remember where to settle once the bubble goes away.
@@ -1059,8 +1160,9 @@ class Companion {
     this.active.setGesture(this.currentGesture);
     this.active.setMode('talk');
 
-    // Show the locally generated translation.
-    this.bubble.show(reply.line, reply.activity);
+    // Show the locally generated translation (plus any quick-action buttons).
+    const extras = this.bubbleExtras(reply);
+    this.bubble.show(reply.line, reply.activity, extras.actions, extras.delayMs);
 
     if (this.muted) return;
 

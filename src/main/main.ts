@@ -13,7 +13,7 @@ import { app, Tray, Menu, nativeImage, powerMonitor, shell } from 'electron';
 import { EV } from '../shared/ipc';
 import type { UpdatePrompt } from '../shared/ipc';
 import type { RockyReply, Settings } from '../shared/types';
-import { INTERVAL_PRESETS } from '../shared/types';
+import { DEFAULT_SETTINGS, INTERVAL_PRESETS } from '../shared/types';
 import { store } from './store';
 import { isScreenGranted } from './permissions';
 import { captureScreen } from './capture';
@@ -30,12 +30,17 @@ import {
   closeConsentWindow,
   showSettingsWindow,
   showLabWindow,
+  showChatWindow,
   sendToCompanion,
+  sendToChat,
   broadcast,
   hideDock,
 } from './windows';
 import { registerIpc } from './ipc';
 import { seedBundledSkins } from './assets';
+import { VoiceNotesController } from './voiceNotes';
+import { notes } from './notes';
+import { NUDGE_MIN_NOTES, shouldOfferWeeklyNudge } from './weeklyNudge';
 import { FocusManager } from './focus';
 import { getFrontmostAppName } from './activeApp';
 import { memory } from './memory';
@@ -54,6 +59,7 @@ import {
   focusCompletedReply,
   focusStartedReply,
   greetingReply,
+  weeklyReflectionOfferReply,
 } from '../shared/persona';
 
 // A small menu-bar template icon (black + alpha circle), embedded so there is
@@ -130,6 +136,55 @@ const focus = new FocusManager(
 let provider!: VisionProvider;
 function rebuildProvider(): void {
   provider = createProvider(store.get());
+}
+
+// Push-to-talk voice notes (Stage 1a). The controller orchestrates; the
+// companion renderer does the actual microphone capture.
+const voiceNotes = new VoiceNotesController({
+  getSettings: () => store.get(),
+  emitReply,
+  sendPtt: (cmd) => sendToCompanion(EV.PTT, cmd),
+  broadcastState: (state) => {
+    broadcast(EV.VOICE_STATE, state);
+    refreshTray();
+  },
+  broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
+  showCompanion: () => showCompanionWindow(),
+});
+
+/**
+ * Friday-afternoon weekly reflection offer: purely local check, throttled to
+ * once per week, and the reflection itself runs only if the user accepts the
+ * bubble's "Reflect now" button.
+ */
+function maybeOfferWeeklyReflection(): void {
+  const s = store.get();
+  if (!s.consentGiven) return;
+  const now = new Date();
+  const weekAgoISO = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const offer = shouldOfferWeeklyNudge(now, {
+    enabled: s.weeklyReflectionNudge,
+    paused: s.paused,
+    lastNudgeISO: s.lastWeeklyNudgeISO,
+    recentNoteCount: notes.recent(NUDGE_MIN_NOTES, weekAgoISO).length,
+  });
+  if (!offer) return;
+  store.set({ lastWeeklyNudgeISO: now.toISOString() });
+  showCompanionWindow();
+  emitReply(weeklyReflectionOfferReply(s.callName));
+}
+
+/**
+ * (Re-)register the push-to-talk hotkey from settings. On failure (invalid or
+ * taken accelerator) fall back to the default so a hotkey always exists.
+ */
+function applyPushToTalkShortcut(): void {
+  const wanted = store.get().pushToTalkShortcut;
+  if (voiceNotes.registerShortcut(wanted)) return;
+  const fallback = DEFAULT_SETTINGS.pushToTalkShortcut;
+  if (wanted !== fallback && voiceNotes.registerShortcut(fallback)) {
+    store.set({ pushToTalkShortcut: fallback });
+  }
 }
 
 const scheduler = new Scheduler({
@@ -241,6 +296,7 @@ function applySettings(patch: Partial<Settings>): Settings {
   ) {
     rebuildProvider();
   }
+  if (patch.pushToTalkShortcut !== undefined) applyPushToTalkShortcut();
 
   broadcast(EV.SETTINGS_UPDATED, s);
   broadcast(EV.STATE, { paused: s.paused, muted: s.muted });
@@ -254,6 +310,7 @@ function onConsentComplete(): void {
   createCompanionWindow();
   const s = store.get();
   if (!s.paused) scheduler.start();
+  applyPushToTalkShortcut();
   greet();
   refreshTray();
 }
@@ -298,6 +355,35 @@ function buildTrayMenu(): Menu {
     {
       label: 'Fist bump',
       click: () => fistBump(),
+    },
+    { type: 'separator' },
+    {
+      label:
+        voiceNotes.getState() === 'recording'
+          ? 'Stop listening (saves the note)'
+          : voiceNotes.getState() === 'processing'
+            ? 'Translating your thought…'
+            : 'Talk to Rocky (voice note)',
+      enabled: voiceNotes.getState() !== 'processing',
+      click: () => void voiceNotes.toggle(),
+    },
+    { label: 'Notes & chat…', click: () => showChatWindow() },
+    {
+      label: 'Reflect',
+      submenu: (
+        [
+          ['Summarize my notes', 'summarize'],
+          ['Find connections', 'connections'],
+          ['Questions for me', 'questions'],
+          ['Weekly reflection', 'weekly'],
+        ] as const
+      ).map(([label, kind]) => ({
+        label,
+        click: () => {
+          showChatWindow();
+          sendToChat(EV.CHAT_ACTION, { reflect: kind });
+        },
+      })),
     },
     { type: 'separator' },
     {
@@ -374,8 +460,17 @@ if (!gotLock) {
       openUpdate,
       dismissUpdate,
       farewellAndQuit,
+      voiceNotes,
+      broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
     });
     updateChecker.start();
+
+    // Weekly-reflection offer: check shortly after launch, then twice an hour.
+    // Cheap and fully local; shouldOfferWeeklyNudge gates everything.
+    const nudgeDelay = setTimeout(() => maybeOfferWeeklyReflection(), 45_000);
+    nudgeDelay.unref();
+    const nudgeTimer = setInterval(() => maybeOfferWeeklyReflection(), 30 * 60_000);
+    nudgeTimer.unref();
 
     const s = store.get();
     if (!s.consentGiven) {
@@ -384,6 +479,7 @@ if (!gotLock) {
     } else {
       createCompanionWindow();
       if (!s.paused) scheduler.start();
+      applyPushToTalkShortcut();
       greet();
       maybeOfferNamePrompt();
     }
@@ -407,5 +503,6 @@ if (!gotLock) {
     }
     scheduler.dispose();
     focus.dispose();
+    voiceNotes.dispose();
   });
 }
