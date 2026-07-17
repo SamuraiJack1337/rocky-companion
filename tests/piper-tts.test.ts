@@ -30,7 +30,15 @@ function resFor(exe: string): SherpaResources {
   return { engine: 'sherpa', exe, model: 'm.onnx', tokens: 't.txt', espeakData: 'espeak' };
 }
 
-test('synthesizeWithSherpa returns the WAV the engine writes to --output-filename', async () => {
+// The fake engine is a shebang node script we exec directly; Windows can't run
+// a shebang, and sherpa is macOS-only anyway, so skip the spawn-based cases on
+// Windows. The pure no-spawn guard still runs everywhere.
+const posixOnly =
+  process.platform === 'win32'
+    ? { skip: 'sherpa engine is macOS-only; fake-exe harness needs a POSIX shebang' }
+    : {};
+
+test('synthesizeWithSherpa returns the WAV the engine writes to --output-filename', posixOnly, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sherpa-ok-'));
   const wav = fakeWav();
   const exe = writeFakeExe(
@@ -44,7 +52,7 @@ test('synthesizeWithSherpa returns the WAV the engine writes to --output-filenam
   assert.equal(buf!.length, wav.length);
 });
 
-test('synthesizeWithSherpa passes the tuning + voice args to the engine', async () => {
+test('synthesizeWithSherpa passes the tuning + voice args to the engine', posixOnly, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sherpa-args-'));
   // The fake writes a WAV *and* echoes its argv to a sidecar so we can assert.
   const exe = writeFakeExe(
@@ -69,7 +77,7 @@ test('synthesizeWithSherpa passes the tuning + voice args to the engine', async 
   fs.rmSync(path.join(os.tmpdir(), sidecar!), { force: true });
 });
 
-test('synthesizeWithSherpa returns null when the engine exits non-zero', async () => {
+test('synthesizeWithSherpa returns null when the engine exits non-zero', posixOnly, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sherpa-fail-'));
   const exe = writeFakeExe(dir, 'process.exit(1);');
   const buf = await synthesizeWithSherpa(resFor(exe), 'nope');
@@ -82,7 +90,7 @@ test('synthesizeWithSherpa returns null on empty text without spawning', async (
   assert.equal(buf, null);
 });
 
-test('synthesizeWithSherpa cleans up its temp WAV', async () => {
+test('synthesizeWithSherpa cleans up its temp WAV', posixOnly, async () => {
   const before = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith('rocky-tts-')).length;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sherpa-clean-'));
   const exe = writeFakeExe(
