@@ -107,6 +107,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Fetch the bundled offline neural voice (Piper) engine + voice model.
+      - run: node scripts/fetch-piper.mjs
       - run: npx electron-builder --win --publish never
 
       - name: Attach Windows installer

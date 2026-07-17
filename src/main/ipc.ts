@@ -14,6 +14,7 @@ import { hasOpenAIKey, setOpenAIKey, deleteOpenAIKey } from './keys';
 import { getScreenPermission, openScreenSettings } from './permissions';
 import { probeOllama, validateOpenAIKey } from './providers/VisionProvider';
 import { synthesizeSpeech } from './tts';
+import { synthesizePiper } from './piperTts';
 import { listSkins, loadSkin, openSkinsFolder } from './assets';
 import { showLabWindow, showSettingsWindow } from './windows';
 import type { TtsOverrides } from '../shared/ipc';
@@ -70,6 +71,12 @@ export function registerIpc(deps: IpcDeps): void {
     CH.TTS_SPEAK,
     (_e, args: { text: string; overrides?: TtsOverrides }) =>
       synthesizeSpeech(args?.text ?? '', args?.overrides),
+  );
+
+  // Offline neural voice (Piper) — no key, fully on-device. Null when the
+  // engine isn't bundled for this platform, so callers fall back to the OS voice.
+  ipcMain.handle(CH.TTS_SPEAK_OFFLINE, (_e, args: { text: string }) =>
+    synthesizePiper(args?.text ?? ''),
   );
 
   // ── creature skins (drop-in art) ──────────────────────────────────────────

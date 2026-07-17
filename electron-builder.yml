@@ -64,6 +64,15 @@ win:
   target:
     - target: nsis
       arch: x64
+  # Bundle the offline neural voice (Piper) engine + Rocky's voice model.
+  # Fetched into vendor/ before the build by scripts/fetch-piper.mjs. Lands at
+  # <resources>/piper/ (engine + espeak data) and <resources>/piper/voice/
+  # (the .onnx model); src/main/piperTts.ts resolves them there.
+  extraResources:
+    - from: vendor/piper/win
+      to: piper
+    - from: vendor/voices
+      to: piper/voice
 
 nsis:
   oneClick: false

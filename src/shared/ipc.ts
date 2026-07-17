@@ -30,6 +30,8 @@ export const CH = {
   KEY_DELETE: 'key:delete-openai',
   // spoken voice (TTS) — synthesized in main so the key never leaves it
   TTS_SPEAK: 'tts:speak',
+  // offline neural spoken voice (Piper) — fully on-device, no key, no network
+  TTS_SPEAK_OFFLINE: 'tts:speak-offline',
   // creature skins (drop-in art)
   SKINS_LIST: 'skins:list',
   SKIN_LOAD: 'skins:load',
@@ -127,6 +129,11 @@ export interface RockyAPI {
    *  returned as one or more cadence segments. Returns null when no key is set
    *  or synthesis fails (caller falls back to the procedural tone). */
   speakLine(text: string, overrides?: TtsOverrides): Promise<TtsSegment[] | null>;
+
+  /** Synthesize a line with the bundled offline neural voice (Piper) — no key,
+   *  on-device. Returns null when unavailable (e.g. macOS, or assets missing)
+   *  or synthesis fails, so the caller can fall back to the OS voice / tone. */
+  speakLineOffline(text: string): Promise<TtsSegment[] | null>;
 
   // ── creature skins (drop-in art) ──────────────────────────────────────────
   listSkins(): Promise<SkinInfo[]>;

@@ -247,14 +247,14 @@ function paintVoiceFields(): void {
   ttsInstructions.style.opacity = styled ? '1' : '0.5';
 
   if (mode === 'offline') {
-    // No key or consent needed — the OS speaks it entirely on-device.
-    testVoiceBtn.disabled = !systemVoiceAvailable();
+    // No key or consent needed — spoken entirely on-device. Windows uses the
+    // bundled neural voice (Piper); other platforms use the OS speech engine.
+    // The test button reports which one actually spoke.
+    testVoiceBtn.disabled = false;
     setStatus(
       voiceStatus,
-      systemVoiceAvailable()
-        ? 'Offline voice ready — uses your OS speech engine. No key needed. Save, then test the line.'
-        : 'Your system does not expose a speech engine; Rocky will use his Eridian tones instead.',
-      systemVoiceAvailable() ? 'muted' : 'warn',
+      'Offline voice ready — on-device, no key. Save, then test the line.',
+      'muted',
     );
     return;
   }
@@ -375,19 +375,25 @@ voicePitchNumber.addEventListener('change', () => syncPitchFrom(voicePitchNumber
 testVoiceBtn.addEventListener('click', async () => {
   const sampleLine = 'Buddy. You are here. I see you. We work, question?';
 
-  // Offline mode: speak the sample with the OS voice — no key, no network.
+  // Offline mode: prefer the bundled neural voice (Piper, via main); fall back
+  // to the OS speech engine. No key, no network either way.
   if (voiceMode.value === 'offline') {
-    if (!systemVoiceAvailable()) {
-      setStatus(voiceStatus, 'No system speech engine available on this device.', 'warn');
-      return;
-    }
     testVoiceBtn.disabled = true;
     setStatus(voiceStatus, 'Speaking…', 'muted');
     try {
-      const ok = await systemAuditioner.speak(sampleLine, clampPitch(Number(voicePitchNumber.value)));
-      setStatus(voiceStatus, ok ? 'Played test line.' : 'Your OS voice did not respond.', ok ? 'ok' : 'warn');
+      const pitch = clampPitch(Number(voicePitchNumber.value));
+      const segments = await window.rocky.speakLineOffline(sampleLine).catch(() => null);
+      if (segments && segments.length) {
+        await auditioner.playSequence(segments, pitch);
+        setStatus(voiceStatus, 'Played test line (neural voice).', 'ok');
+      } else if (systemVoiceAvailable()) {
+        const ok = await systemAuditioner.speak(sampleLine, pitch);
+        setStatus(voiceStatus, ok ? 'Played test line (system voice).' : 'Your OS voice did not respond.', ok ? 'ok' : 'warn');
+      } else {
+        setStatus(voiceStatus, 'No offline voice available on this device.', 'warn');
+      }
     } finally {
-      testVoiceBtn.disabled = !systemVoiceAvailable();
+      testVoiceBtn.disabled = false;
     }
     return;
   }

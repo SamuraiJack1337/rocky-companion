@@ -15,6 +15,10 @@ secrets.json
 # Dependencies
 node_modules/
 
+# Bundled offline TTS engine + voice model, fetched at build time by
+# scripts/fetch-piper.mjs (never committed — downloaded from upstream).
+vendor/
+
 # Build output
 dist/
 out/

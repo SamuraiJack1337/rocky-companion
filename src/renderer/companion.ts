@@ -1085,22 +1085,28 @@ class Companion {
         this.playTone(reply.motif, 1);
       }
     } else if (this.voiceMode === 'offline') {
-      // Offline OS voice: Rocky speaks the words with the system's own TTS —
-      // no key, on-device. Optional soft chords underneath as his real
-      // language. The Web Speech API doesn't report a duration up front, so we
-      // glow across an estimate rather than awaiting the utterance.
+      // Offline spoken voice: no key, fully on-device. Optional soft chords
+      // underneath as Rocky's real language.
       if (this.musicUnderlay) this.playTone(reply.motif, 0.22);
 
-      const spoke = this.system.speak(reply.line, this.voicePitch);
-      if (!this.muted) {
+      // Prefer the bundled neural voice (main/Piper): it returns WAV segments
+      // that play through the shared spoken path with accurate glow timing.
+      const segments = await window.rocky.speakLineOffline(reply.line).catch(() => null);
+      if (segments && segments.length && !this.muted) {
+        const duration = await this.spoken.playSequence(segments, this.voicePitch).catch(() => 0);
+        this.active.scheduleGlowPulses(glowPulsesForDuration(duration));
+      } else if (!this.muted) {
+        // Piper not bundled on this platform (e.g. macOS) — fall back to the
+        // OS speech engine. It reports no duration up front, so glow on an
+        // estimate rather than awaiting the utterance.
         this.active.scheduleGlowPulses(
           glowPulsesForDuration(this.system.estimateDuration(reply.line)),
         );
+        const ok = await this.system.speak(reply.line, this.voicePitch).catch(() => false);
+        // Nothing spoke and no underlay already played — full tone so Rocky is
+        // never silent.
+        if (!ok && !this.musicUnderlay && !this.muted) this.playTone(reply.motif, 1);
       }
-      const ok = await spoke.catch(() => false);
-      // System voice unavailable/failed (and no underlay already played) — fall
-      // back to the full procedural tone so Rocky is never silent.
-      if (!ok && !this.musicUnderlay && !this.muted) this.playTone(reply.motif, 1);
     } else {
       // Procedural Eridian chords; glow pulses align to their onsets.
       this.playTone(reply.motif, 1);

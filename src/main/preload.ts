@@ -43,6 +43,8 @@ const api: RockyAPI = {
   // spoken voice (TTS)
   speakLine: (text: string, overrides?: TtsOverrides) =>
     ipcRenderer.invoke(CH.TTS_SPEAK, { text, overrides }) as Promise<TtsSegment[] | null>,
+  speakLineOffline: (text: string) =>
+    ipcRenderer.invoke(CH.TTS_SPEAK_OFFLINE, { text }) as Promise<TtsSegment[] | null>,
 
   // creature skins (drop-in art)
   listSkins: () => ipcRenderer.invoke(CH.SKINS_LIST) as Promise<SkinInfo[]>,
