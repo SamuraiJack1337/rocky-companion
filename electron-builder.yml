@@ -41,17 +41,18 @@ mac:
   target:
     - target: dmg
       arch: universal
-  # Bundle the offline neural voice (sherpa-onnx) engine + Rocky's voice model.
+  # Bundle the offline neural voice: sherpa-onnx engine + the Kokoro model.
   # Fetched into vendor/ before the build by scripts/fetch-piper.mjs. The binary
   # + its onnxruntime dylib are universal2 (arm64 + x86_64), so one copy serves
   # both DMG slices. Lands at <resources>/piper/ (engine) and
-  # <resources>/piper/voice/ (model, tokens, espeak-ng-data); src/main/
-  # piperTts.ts resolves them there, mirroring the Windows layout. The
-  # afterPack adhoc-sign hook signs the nested binary + dylib (see that file).
+  # <resources>/piper/voice/ (model, voices.bin, tokens, espeak-ng-data) — the
+  # "piper" folder name is historical; src/main/offlineTts.ts resolves it there,
+  # mirroring the Windows layout. The afterPack adhoc-sign hook signs the
+  # nested binary + dylib (see that file).
   extraResources:
-    - from: vendor/piper/mac
+    - from: vendor/sherpa/mac
       to: piper
-    - from: vendor/voices-mac
+    - from: vendor/voice-kokoro
       to: piper/voice
   # Screen Recording permission prompt copy (Info.plist).
   extendInfo:
@@ -82,14 +83,15 @@ win:
   target:
     - target: nsis
       arch: x64
-  # Bundle the offline neural voice (Piper) engine + Rocky's voice model.
-  # Fetched into vendor/ before the build by scripts/fetch-piper.mjs. Lands at
-  # <resources>/piper/ (engine + espeak data) and <resources>/piper/voice/
-  # (the .onnx model); src/main/piperTts.ts resolves them there.
+  # Bundle the offline neural voice: sherpa-onnx engine (x64, MT — no VC++
+  # Redistributable needed) + the same Kokoro model as macOS. Fetched into
+  # vendor/ before the build by scripts/fetch-piper.mjs. Lands at
+  # <resources>/piper/ (exe + DLLs; historical folder name) and
+  # <resources>/piper/voice/; src/main/offlineTts.ts resolves them there.
   extraResources:
-    - from: vendor/piper/win
+    - from: vendor/sherpa/win
       to: piper
-    - from: vendor/voices
+    - from: vendor/voice-kokoro
       to: piper/voice
 
 nsis:

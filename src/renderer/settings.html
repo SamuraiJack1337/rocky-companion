@@ -341,9 +341,10 @@
       </div>
       <div class="field">
         <label class="block" for="ollama-model">Vision model</label>
-        <input type="text" id="ollama-model" list="ollama-model-suggestions" spellcheck="false" autocomplete="off" placeholder="llama3.2-vision" />
+        <input type="text" id="ollama-model" list="ollama-model-suggestions" spellcheck="false" autocomplete="off" placeholder="qwen2.5vl:7b" />
         <datalist id="ollama-model-suggestions">
-          <option value="llama3.2-vision">Llama 3.2 Vision — 11B, best quality, slow to load</option>
+          <option value="qwen2.5vl:7b">Qwen2.5-VL 7B — default, strong quality/speed balance</option>
+          <option value="llama3.2-vision">Llama 3.2 Vision — 11B, heavier alternative</option>
           <option value="gemma3:4b">Gemma 3 4B — light &amp; multimodal, good balance</option>
           <option value="moondream">Moondream — ~1.7B, fastest, lowest RAM</option>
           <option value="llava">LLaVA — classic open vision model</option>
@@ -562,9 +563,9 @@
         </select>
         <div class="hint">
           Eridian chords are Rocky's primary, fully on-device voice. The offline spoken voice uses a
-          bundled neural voice on Windows (system speech elsewhere) — no key, nothing leaves your
-          device (great with Ollama). The OpenAI option sends only Rocky's generated line (never a
-          screenshot) under your key.
+          bundled neural voice (Kokoro) on macOS and Windows (system speech elsewhere) — no key,
+          nothing leaves your device (great with Ollama). The OpenAI option sends only Rocky's
+          generated line (never a screenshot) under your key.
         </div>
       </div>
 
@@ -613,6 +614,21 @@
           <div class="hint">Shapes pace and warmth (not identity). Empty = the natural preset. Avoid pace words like "slowly".</div>
         </div>
 
+      </div>
+
+      <div id="offline-fields">
+        <div class="field">
+          <label class="block" for="offline-speaker">Offline voice speaker</label>
+          <select id="offline-speaker"></select>
+          <div class="hint">
+            The bundled voice's own synthetic speakers — pick by ear. Not modeled on any real
+            person.
+          </div>
+        </div>
+      </div>
+
+      <!-- Shared spoken-voice controls: apply to BOTH the offline and OpenAI voices. -->
+      <div id="voice-shared-fields">
         <div class="field">
           <label class="block" for="voice-pitch">Pitch</label>
           <div class="range-row">
@@ -689,7 +705,10 @@
         <div class="field">
           <label class="block" for="whisper-cli">whisper-cli path</label>
           <input type="text" id="whisper-cli" spellcheck="false" autocomplete="off" placeholder="whisper-cli" />
-          <div class="hint">Install with <code>brew install whisper-cpp</code>; a bare name is searched on PATH and the Homebrew locations.</div>
+          <!-- Platform-specific hint variants; settings.ts un-hides the right one. -->
+          <div class="hint" id="whisper-cli-hint-mac" hidden>Install with <code>brew install whisper-cpp</code>; a bare name is searched on PATH and the Homebrew locations.</div>
+          <div class="hint" id="whisper-cli-hint-win" hidden>Download the whisper.cpp Windows build (<code>whisper-bin-x64.zip</code> from the whisper.cpp GitHub releases), extract it, and set the full path to <code>whisper-cli.exe</code> — or keep the bare name if its folder is on PATH.</div>
+          <div class="hint" id="whisper-cli-hint-other" hidden>Build or install whisper.cpp; a bare name is searched on PATH.</div>
         </div>
         <div class="field">
           <label class="block" for="whisper-model">Whisper model file</label>
@@ -759,6 +778,7 @@
         <div class="status muted" id="screen-status">Checking…</div>
         <div class="inline" style="margin-top: 8px">
           <button id="open-screen-settings" class="hidden">Open System Settings</button>
+          <button id="fix-screen-permission" class="hidden">Fix screen permission</button>
           <button id="recheck-screen">Re-check</button>
           <button id="relaunch-app" class="hidden">Relaunch Rocky</button>
         </div>
@@ -768,11 +788,12 @@
           belongs to the binary, not the name). Enable it, then use <strong>Relaunch
           Rocky</strong> — macOS only applies the grant to a fresh launch.
           <br /><br />
-          <strong>Toggle already ON but Rocky still says denied?</strong> The grant likely
+          <strong>Toggle already ON but Rocky still can't see?</strong> The grant likely
           belongs to an older copy of the app (each update of the unsigned build looks like a
-          new app to macOS). Turn the toggle <strong>off and back on</strong> for Rocky
-          Companion, approve the prompt, then relaunch. If it is still stuck, run
-          <code>tccutil reset ScreenCapture</code> in Terminal, launch Rocky, and grant again.
+          new app to macOS). Click <strong>Fix screen permission</strong> — it clears the stale
+          grant and reopens System Settings so you can grant Rocky fresh; then relaunch. As a
+          last resort, run <code>tccutil reset ScreenCapture</code> in Terminal, launch Rocky,
+          and grant again.
         </div>
       </div>
     </section>

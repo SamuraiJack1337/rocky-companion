@@ -1,13 +1,13 @@
 // Downloads the bundled offline neural TTS engine and Rocky's voice model into
 // vendor/, ready for electron-builder to package as extraResources.
 //
-// Two engines, one voice (see src/main/piperTts.ts):
-//   • Windows → Piper (MIT). Prebuilt piper_windows_amd64 + the en_US-ryan
-//     .onnx voice from HuggingFace.
-//   • macOS   → sherpa-onnx (Apache-2.0). The upstream Piper macOS binaries are
-//     broken/mislabeled, so we ship sherpa-onnx's clean universal2 (arm64 +
-//     x86_64) prebuilt, which runs the SAME .onnx voice. Its release model
-//     package bundles model + tokens + espeak-ng-data.
+// One engine, one voice, both platforms (see src/main/offlineTts.ts):
+//   • Engine → sherpa-onnx (Apache-2.0) offline-tts CLI. macOS gets the clean
+//     universal2 (arm64 + x86_64) prebuilt; Windows gets the x64 MT build
+//     (statically-linked MSVC CRT, so no VC++ Redistributable needed).
+//   • Voice  → Kokoro (Apache-2.0), fp32 English model from the sherpa-onnx
+//     tts-models release. Far more natural than the Piper/VITS voices this
+//     replaced, and the SAME model files serve both platforms.
 //
 // Run automatically before a build (npm run dist:* / CI). Idempotent: existing
 // files are left in place. No npm dependencies — Node's built-in fetch
@@ -23,21 +23,20 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VENDOR = path.join(ROOT, 'vendor');
 
 // Pinned upstream versions so builds are reproducible.
-const PIPER_TAG = '2023.11.14-2';
 const SHERPA_TAG = 'v1.13.4';
-const VOICE = 'en_US-ryan-medium'; // warm, clear male voice — a fitting Rocky register
-const VOICE_URL_DIR =
-  'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/medium';
+const SHERPA_BASE = `https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_TAG}`;
+const SHERPA_MAC_TARBALL = `${SHERPA_BASE}/sherpa-onnx-${SHERPA_TAG}-osx-universal2-shared.tar.bz2`;
+// MT = static MSVC CRT: users don't need the VC++ Redistributable installed.
+const SHERPA_WIN_TARBALL = `${SHERPA_BASE}/sherpa-onnx-${SHERPA_TAG}-win-x64-shared-MT-Release.tar.bz2`;
 
-const PIPER_ZIP = {
-  win32: `https://github.com/rhasspy/piper/releases/download/${PIPER_TAG}/piper_windows_amd64.zip`,
-};
-
-// sherpa-onnx macOS runtime (universal2: one binary/lib for arm64 + x86_64) and
-// the matching Piper VITS voice package.
-const SHERPA_MAC_TARBALL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_TAG}/sherpa-onnx-${SHERPA_TAG}-osx-universal2-shared.tar.bz2`;
-const SHERPA_MAC_TOPDIR = `sherpa-onnx-${SHERPA_TAG}-osx-universal2-shared`;
-const SHERPA_VOICE_TARBALL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-${VOICE}.tar.bz2`;
+// Kokoro voice — fp32 (~330 MB extracted). The int8 quantization was audibly
+// muddier on the male speaker we ship (am_michael), so we take the size hit for
+// the clearly better voice. int8 (`kokoro-int8-en-v0_19`, ~100 MB) remains a
+// drop-in swap here if bundle size ever has to win over quality.
+const KOKORO = 'kokoro-en-v0_19';
+const KOKORO_TARBALL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${KOKORO}.tar.bz2`;
+/** Model file the chosen archive extracts (int8 archives ship model.int8.onnx). */
+const KOKORO_MODEL = KOKORO.includes('int8') ? 'model.int8.onnx' : 'model.onnx';
 
 /** Which platform to fetch for. Defaults to the host; override with --platform. */
 function targetPlatform() {
@@ -61,75 +60,73 @@ function extractArchive(archivePath, destDir) {
   if (r.status !== 0) throw new Error(`tar failed to extract ${archivePath}`);
 }
 
-// -- Windows: Piper --------------------------------------------------------
-
-async function fetchVoiceWin() {
-  const dir = path.join(VENDOR, 'voices');
-  fs.mkdirSync(dir, { recursive: true });
-  const model = path.join(dir, `${VOICE}.onnx`);
-  const config = path.join(dir, `${VOICE}.onnx.json`);
-  if (fs.existsSync(model) && fs.existsSync(config)) {
-    console.log(`voice ${VOICE} (win): already present`);
-    return;
+/** The single directory an archive extracted into (upstream names vary). */
+function soleSubdir(staging) {
+  const entries = fs.readdirSync(staging).filter((f) => {
+    return fs.statSync(path.join(staging, f)).isDirectory();
+  });
+  if (entries.length !== 1) {
+    throw new Error(`expected one top-level dir in ${staging}, found: ${entries.join(', ')}`);
   }
-  console.log(`voice ${VOICE} (win):`);
-  await download(`${VOICE_URL_DIR}/${VOICE}.onnx`, model);
-  await download(`${VOICE_URL_DIR}/${VOICE}.onnx.json`, config);
+  return path.join(staging, entries[0]);
 }
 
-async function fetchPiperWin() {
-  const winDir = path.join(VENDOR, 'piper', 'win');
-  if (fs.existsSync(path.join(winDir, 'piper.exe'))) {
-    console.log('piper (win): already present');
-    return;
+/** Remove leftovers of the pre-Kokoro layout (Piper engine, ryan voices). */
+function pruneLegacyLayout() {
+  for (const stale of ['piper', 'voices', 'voices-mac']) {
+    const dir = path.join(VENDOR, stale);
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`pruned stale vendor/${stale}`);
+    }
   }
-  console.log('piper (win):');
-  const tmpZip = path.join(VENDOR, 'piper_win.zip');
-  await download(PIPER_ZIP.win32, tmpZip);
-  // The zip contains a top-level `piper/` folder; extract then hoist it to win/.
-  const staging = path.join(VENDOR, '_piper_win_staging');
-  fs.rmSync(staging, { recursive: true, force: true });
-  extractArchive(tmpZip, staging);
-  fs.rmSync(winDir, { recursive: true, force: true });
-  fs.mkdirSync(path.dirname(winDir), { recursive: true });
-  fs.renameSync(path.join(staging, 'piper'), winDir);
-  fs.rmSync(staging, { recursive: true, force: true });
-  fs.rmSync(tmpZip, { force: true });
-  console.log(`  → ${path.relative(ROOT, winDir)}`);
 }
 
-// -- macOS: sherpa-onnx ----------------------------------------------------
+// -- Voice: Kokoro (shared by both platforms) --------------------------------
 
-async function fetchVoiceMac() {
-  const dir = path.join(VENDOR, 'voices-mac');
-  const model = path.join(dir, `${VOICE}.onnx`);
-  const tokens = path.join(dir, 'tokens.txt');
-  const espeak = path.join(dir, 'espeak-ng-data');
-  if (fs.existsSync(model) && fs.existsSync(tokens) && fs.existsSync(espeak)) {
-    console.log(`voice ${VOICE} (mac): already present`);
+async function fetchKokoroVoice() {
+  const dir = path.join(VENDOR, 'voice-kokoro');
+  // Key the "already present" check on the EXACT expected model file, so
+  // switching archives (e.g. int8 → fp32) re-fetches instead of leaving a
+  // stale model.int8.onnx alongside a build that expects model.onnx.
+  const complete =
+    fs.existsSync(path.join(dir, KOKORO_MODEL)) &&
+    fs.existsSync(path.join(dir, 'voices.bin')) &&
+    fs.existsSync(path.join(dir, 'tokens.txt')) &&
+    fs.existsSync(path.join(dir, 'espeak-ng-data'));
+  if (complete) {
+    console.log(`voice ${KOKORO}: already present`);
     return;
   }
-  console.log(`voice ${VOICE} (mac):`);
-  fs.mkdirSync(dir, { recursive: true });
-  const tarball = path.join(VENDOR, 'sherpa_voice_mac.tar.bz2');
-  await download(SHERPA_VOICE_TARBALL, tarball);
-  const staging = path.join(VENDOR, '_sherpa_voice_staging');
+  console.log(`voice ${KOKORO}:`);
+  const tarball = path.join(VENDOR, 'kokoro.tar.bz2');
+  await download(KOKORO_TARBALL, tarball);
+  const staging = path.join(VENDOR, '_kokoro_staging');
   fs.rmSync(staging, { recursive: true, force: true });
   extractArchive(tarball, staging);
-  const src = path.join(staging, `vits-piper-${VOICE}`);
-  // sherpa's CLI needs the model, tokens, and espeak-ng-data phonemizer dir.
-  fs.copyFileSync(path.join(src, `${VOICE}.onnx`), model);
-  fs.copyFileSync(path.join(src, `${VOICE}.onnx.json`), path.join(dir, `${VOICE}.onnx.json`));
-  fs.copyFileSync(path.join(src, 'tokens.txt'), tokens);
-  fs.rmSync(espeak, { recursive: true, force: true });
-  fs.cpSync(path.join(src, 'espeak-ng-data'), espeak, { recursive: true });
+  const src = soleSubdir(staging);
+  // sherpa's CLI needs the model, voices.bin (speaker embeddings), tokens, and
+  // the espeak-ng-data phonemizer dir. Keep LICENSE for attribution.
+  const model = fs.readdirSync(src).find((f) => f.endsWith('.onnx'));
+  if (!model) throw new Error(`no .onnx model in ${src}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(path.join(src, model), path.join(dir, model));
+  for (const f of ['voices.bin', 'tokens.txt', 'LICENSE']) {
+    if (fs.existsSync(path.join(src, f))) fs.copyFileSync(path.join(src, f), path.join(dir, f));
+  }
+  fs.cpSync(path.join(src, 'espeak-ng-data'), path.join(dir, 'espeak-ng-data'), {
+    recursive: true,
+  });
   fs.rmSync(staging, { recursive: true, force: true });
   fs.rmSync(tarball, { force: true });
   console.log(`  → ${path.relative(ROOT, dir)}`);
 }
 
+// -- Engine: sherpa-onnx ------------------------------------------------------
+
 async function fetchSherpaMac() {
-  const macDir = path.join(VENDOR, 'piper', 'mac');
+  const macDir = path.join(VENDOR, 'sherpa', 'mac');
   const exe = path.join(macDir, 'sherpa-onnx-offline-tts');
   if (fs.existsSync(exe)) {
     console.log('sherpa-onnx (mac): already present');
@@ -142,7 +139,7 @@ async function fetchSherpaMac() {
   const staging = path.join(VENDOR, '_sherpa_mac_staging');
   fs.rmSync(staging, { recursive: true, force: true });
   extractArchive(tarball, staging);
-  const top = path.join(staging, SHERPA_MAC_TOPDIR);
+  const top = soleSubdir(staging);
   // We only need the offline-tts CLI (sherpa's C++ is static-linked into it)
   // and its onnxruntime dylib; the binary's @loader_path rpath finds the dylib
   // as a sibling. Everything else in the tarball is unused.
@@ -159,15 +156,51 @@ async function fetchSherpaMac() {
   console.log(`  → ${path.relative(ROOT, macDir)} (${dylib})`);
 }
 
+async function fetchSherpaWin() {
+  const winDir = path.join(VENDOR, 'sherpa', 'win');
+  const exe = path.join(winDir, 'sherpa-onnx-offline-tts.exe');
+  if (fs.existsSync(exe)) {
+    console.log('sherpa-onnx (win): already present');
+    return;
+  }
+  console.log('sherpa-onnx (win):');
+  fs.mkdirSync(winDir, { recursive: true });
+  const tarball = path.join(VENDOR, 'sherpa_win.tar.bz2');
+  await download(SHERPA_WIN_TARBALL, tarball);
+  const staging = path.join(VENDOR, '_sherpa_win_staging');
+  fs.rmSync(staging, { recursive: true, force: true });
+  extractArchive(tarball, staging);
+  const top = soleSubdir(staging);
+  // The CLI resolves its DLLs (onnxruntime + sherpa shared libs) as siblings,
+  // mirroring the mac dylib layout. Copy the exe plus every DLL we can find.
+  fs.copyFileSync(path.join(top, 'bin', 'sherpa-onnx-offline-tts.exe'), exe);
+  let dlls = 0;
+  for (const sub of ['bin', 'lib']) {
+    const dir = path.join(top, sub);
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir)) {
+      if (f.toLowerCase().endsWith('.dll')) {
+        fs.copyFileSync(path.join(dir, f), path.join(winDir, f));
+        dlls += 1;
+      }
+    }
+  }
+  if (dlls === 0) throw new Error(`no DLLs found under ${top} — CLI would not start`);
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.rmSync(tarball, { force: true });
+  console.log(`  → ${path.relative(ROOT, winDir)} (${dlls} DLLs)`);
+}
+
 async function main() {
   const platform = targetPlatform();
   fs.mkdirSync(VENDOR, { recursive: true });
+  pruneLegacyLayout();
   if (platform === 'win32') {
-    await fetchVoiceWin();
-    await fetchPiperWin();
+    await fetchSherpaWin();
+    await fetchKokoroVoice();
   } else if (platform === 'darwin') {
     await fetchSherpaMac();
-    await fetchVoiceMac();
+    await fetchKokoroVoice();
   } else {
     console.log(`offline voice: no bundled engine for ${platform} (OS voice is used there); skipping.`);
   }

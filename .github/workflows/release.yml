@@ -46,7 +46,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Fetch the bundled offline neural voice (sherpa-onnx) engine + voice model.
+      # Fetch the bundled offline neural voice (sherpa-onnx + Kokoro model).
       - run: node scripts/fetch-piper.mjs
       - run: npx electron-builder --mac --publish never
 
@@ -120,7 +120,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Fetch the bundled offline neural voice (Piper) engine + voice model.
+      # Fetch the bundled offline neural voice (sherpa-onnx + Kokoro model).
       - run: node scripts/fetch-piper.mjs
       - run: npx electron-builder --win --publish never
 

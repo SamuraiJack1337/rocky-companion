@@ -1191,14 +1191,14 @@ class Companion {
       // underneath as Rocky's real language.
       if (this.musicUnderlay) this.playTone(reply.motif, 0.22);
 
-      // Prefer the bundled neural voice (main/Piper): it returns WAV segments
+      // Prefer the bundled neural voice (main/Kokoro): it returns WAV segments
       // that play through the shared spoken path with accurate glow timing.
       const segments = await window.rocky.speakLineOffline(reply.line).catch(() => null);
       if (segments && segments.length && !this.muted) {
         const duration = await this.spoken.playSequence(segments, this.voicePitch).catch(() => 0);
         this.active.scheduleGlowPulses(glowPulsesForDuration(duration));
       } else if (!this.muted) {
-        // Piper not bundled on this platform (e.g. macOS) — fall back to the
+        // Neural voice not bundled on this platform — fall back to the
         // OS speech engine. It reports no duration up front, so glow on an
         // estimate rather than awaiting the utterance.
         this.active.scheduleGlowPulses(

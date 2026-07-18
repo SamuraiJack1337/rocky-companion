@@ -23,11 +23,13 @@ import {
   getScreenPermission,
   openScreenSettings,
   requestMicPermission,
+  resetScreenPermission,
 } from './permissions';
+import { captureScreen } from './capture';
 import { probeOllama, validateOpenAIKey } from './providers/VisionProvider';
 import { createSpeechProvider } from './providers/SpeechProvider';
 import { synthesizeSpeech } from './tts';
-import { synthesizePiper } from './piperTts';
+import { synthesizeOffline } from './offlineTts';
 import { listSkins, loadSkin, openSkinsFolder } from './assets';
 import { sendToChat, showChatWindow, showLabWindow, showSettingsWindow } from './windows';
 import type { TtsOverrides } from '../shared/ipc';
@@ -93,11 +95,17 @@ export function registerIpc(deps: IpcDeps): void {
       synthesizeSpeech(args?.text ?? '', args?.overrides),
   );
 
-  // Offline neural voice (Piper) — no key, fully on-device. Null when the
-  // engine isn't bundled for this platform, so callers fall back to the OS voice.
-  ipcMain.handle(CH.TTS_SPEAK_OFFLINE, (_e, args: { text: string }) =>
-    synthesizePiper(args?.text ?? ''),
-  );
+  // Offline neural voice (Kokoro via sherpa-onnx) — no key, fully on-device.
+  // Null when the engine isn't bundled for this platform, so callers fall back
+  // to the OS voice. Speaker + cadence come from settings, resolved here so the
+  // synth module stays electron-light and testable.
+  ipcMain.handle(CH.TTS_SPEAK_OFFLINE, (_e, args: { text: string }) => {
+    const s = store.get();
+    return synthesizeOffline(args?.text ?? '', {
+      sid: s.offlineTtsSpeaker,
+      cadence: s.expressiveCadence,
+    });
+  });
 
   // ── creature skins (drop-in art) ──────────────────────────────────────────
   ipcMain.handle(CH.SKINS_LIST, () => listSkins());
@@ -112,6 +120,20 @@ export function registerIpc(deps: IpcDeps): void {
   );
   ipcMain.handle(CH.SCREEN_PERMISSION_CHECK, () => getScreenPermission());
   ipcMain.handle(CH.SCREEN_PERMISSION_OPEN, () => openScreenSettings());
+  ipcMain.handle(CH.SCREEN_PERMISSION_RESET, () => resetScreenPermission());
+  // One cheap in-memory test capture + the status. `granted` + `blank` is the
+  // stale-TCC-grant signature the settings window keys its "Fix" button on.
+  ipcMain.handle(CH.CAPTURE_DIAGNOSE, async () => {
+    const status = getScreenPermission();
+    let blank = true;
+    try {
+      const shot = await captureScreen(256);
+      blank = shot.blank || !shot.base64;
+    } catch {
+      // Capture threw outright — treat as blank; status tells the rest.
+    }
+    return { status, blank };
+  });
   // macOS applies a Screen Recording grant only to a fresh launch, so the
   // settings window offers a one-click relaunch after the user flips the toggle.
   ipcMain.handle(CH.RELAUNCH, () => {

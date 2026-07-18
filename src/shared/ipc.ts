@@ -8,6 +8,8 @@ import type {
   RockyReply,
   RockyState,
   ScreenPermissionStatus,
+  ScreenPermissionResetResult,
+  ScreenCaptureDiagnosis,
   OllamaStatus,
   KeyResult,
   ProviderKind,
@@ -39,7 +41,7 @@ export const CH = {
   KEY_DELETE: 'key:delete-openai',
   // spoken voice (TTS) — synthesized in main so the key never leaves it
   TTS_SPEAK: 'tts:speak',
-  // offline neural spoken voice (Piper) — fully on-device, no key, no network
+  // offline neural spoken voice (Kokoro) — fully on-device, no key, no network
   TTS_SPEAK_OFFLINE: 'tts:speak-offline',
   // creature skins (drop-in art)
   SKINS_LIST: 'skins:list',
@@ -49,6 +51,8 @@ export const CH = {
   OLLAMA_CHECK: 'provider:check-ollama',
   SCREEN_PERMISSION_CHECK: 'permission:check-screen',
   SCREEN_PERMISSION_OPEN: 'permission:open-screen',
+  SCREEN_PERMISSION_RESET: 'permission:reset-screen',
+  CAPTURE_DIAGNOSE: 'capture:diagnose',
   RELAUNCH: 'app:relaunch',
   // consent + lifecycle
   CONSENT_SUBMIT: 'consent:submit',
@@ -159,6 +163,10 @@ export interface TtsSegment {
  * there is no direct Node or ipcRenderer access (contextIsolation: true).
  */
 export interface RockyAPI {
+  /** Host OS ('darwin' | 'win32' | 'linux') — a plain value, not a channel;
+   *  the renderer uses it for platform-appropriate help text. */
+  readonly platform: NodeJS.Platform;
+
   // ── settings ────────────────────────────────────────────────────────────
   getSettings(): Promise<Settings>;
   setSettings(patch: Partial<Settings>): Promise<Settings>;
@@ -176,9 +184,10 @@ export interface RockyAPI {
    *  or synthesis fails (caller falls back to the procedural tone). */
   speakLine(text: string, overrides?: TtsOverrides): Promise<TtsSegment[] | null>;
 
-  /** Synthesize a line with the bundled offline neural voice (Piper) — no key,
-   *  on-device. Returns null when unavailable (e.g. macOS, or assets missing)
-   *  or synthesis fails, so the caller can fall back to the OS voice / tone. */
+  /** Synthesize a line with the bundled offline neural voice (Kokoro via
+   *  sherpa-onnx, macOS + Windows) — no key, on-device. Returns null when
+   *  unavailable (unsupported platform, assets missing) or synthesis fails,
+   *  so the caller can fall back to the OS voice / tone. */
   speakLineOffline(text: string): Promise<TtsSegment[] | null>;
 
   // ── creature skins (drop-in art) ──────────────────────────────────────────
@@ -190,6 +199,10 @@ export interface RockyAPI {
   checkOllama(host: string, model: string): Promise<OllamaStatus>;
   checkScreenPermission(): Promise<ScreenPermissionStatus>;
   openScreenSettings(): Promise<void>;
+  /** In-app `tccutil reset ScreenCapture` fix flow for stale grants (macOS). */
+  resetScreenPermission(): Promise<ScreenPermissionResetResult>;
+  /** One test capture + status — detects the granted-but-black stale-grant case. */
+  diagnoseScreenCapture(): Promise<ScreenCaptureDiagnosis>;
   relaunchApp(): Promise<void>;
 
   // ── consent + lifecycle ──────────────────────────────────────────────────

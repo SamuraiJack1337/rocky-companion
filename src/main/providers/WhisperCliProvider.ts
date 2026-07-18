@@ -1,6 +1,7 @@
 // The private, on-device speech-to-text backend: whisper.cpp's CLI
-// (`brew install whisper-cpp` provides `whisper-cli`), user-installed exactly
-// like Ollama is for vision. Nothing leaves the machine.
+// (`brew install whisper-cpp` on macOS; the whisper-bin-x64.zip release on
+// Windows), user-installed exactly like Ollama is for vision. Nothing leaves
+// the machine. Cross-platform CLI resolution lives in whisperResolve.ts.
 //
 // Privacy note: whisper-cli reads audio from a FILE, so the captured WAV is
 // written briefly to an owner-only (0600) temp file inside userData and
@@ -15,6 +16,9 @@ import * as path from 'node:path';
 import type { ProviderKind, TranscriptionResult } from '../../shared/types';
 import type { ProviderReadiness } from './VisionProvider';
 import type { SpeechProvider } from './SpeechProvider';
+import { resolveWhisperCli, whisperNotFoundHint } from './whisperResolve';
+
+export { resolveWhisperCli } from './whisperResolve';
 
 /** Generous cap — local transcription of a few minutes of speech can be slow. */
 const TRANSCRIBE_TIMEOUT_MS = 180_000;
@@ -25,45 +29,10 @@ const NO_MODEL_ERROR =
   'Rocky needs a Whisper model file. Point Settings at a ggml model, {name}.';
 const FAILED_ERROR = 'Rocky heard, but the local translation failed, {name}.';
 
-/**
- * Resolve the CLI to an absolute executable path. A bare command name is
- * searched on PATH plus the common Homebrew locations, because a GUI app
- * launched from Finder does not inherit a shell PATH.
- */
-export function resolveWhisperCli(configured: string): string | null {
-  const trimmed = (configured || '').trim();
-  if (!trimmed) return null;
-  const isExecutable = (p: string): boolean => {
-    try {
-      fs.accessSync(p, fs.constants.X_OK);
-      return fs.statSync(p).isFile();
-    } catch {
-      return false;
-    }
-  };
-  if (trimmed.includes(path.sep)) {
-    return isExecutable(trimmed) ? trimmed : null;
-  }
-  const dirs = [
-    ...(process.env.PATH ?? '').split(path.delimiter),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-  ].filter(Boolean);
-  for (const dir of dirs) {
-    const candidate = path.join(dir, trimmed);
-    if (isExecutable(candidate)) return candidate;
-  }
-  return null;
-}
-
 /** Readiness of the local whisper.cpp setup, reused by the Settings probe. */
 export function probeWhisperCli(cliPath: string, modelPath: string): ProviderReadiness {
   if (!resolveWhisperCli(cliPath)) {
-    return {
-      ok: false,
-      error:
-        'whisper-cli was not found. Install it (brew install whisper-cpp) or set its full path.',
-    };
+    return { ok: false, error: whisperNotFoundHint() };
   }
   const model = (modelPath || '').trim();
   if (!model) {

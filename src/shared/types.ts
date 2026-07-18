@@ -162,6 +162,19 @@ export const TTS_VOICES: readonly string[] = [
 ];
 
 /**
+ * Offline (Kokoro) voice speakers surfaced in Settings — a curated subset of
+ * the model's built-in licensed speakers (ids are rows in voices.bin), labeled
+ * by character rather than internal name. Same synthetic-voice principle as
+ * TTS_VOICES: never modeled on or used to imitate a real person.
+ */
+export const OFFLINE_TTS_SPEAKERS: readonly { id: number; label: string }[] = [
+  { id: 6, label: 'Michael — warm (default)' },
+  { id: 5, label: 'Adam — deeper' },
+  { id: 9, label: 'George — British' },
+  { id: 10, label: 'Lewis — British, low' },
+];
+
+/**
  * Default delivery instruction for gpt-4o-mini-tts. A light, warm, friendly
  * read at a natural pace — this lifts the voice so it isn't heavy/neutral.
  * Shapes delivery STYLE only (pace, warmth, brightness), never identity.
@@ -299,6 +312,22 @@ export type ScreenPermissionStatus =
   | 'not-determined'
   | 'unknown';
 
+/** Outcome of the in-app `tccutil reset ScreenCapture` fix flow (macOS). */
+export interface ScreenPermissionResetResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * One test capture + the permission status, together. `blank` while `granted`
+ * is the signature of a stale TCC grant (ad-hoc signature changed on update):
+ * the System Settings toggle shows ON but the OS hands us black frames.
+ */
+export interface ScreenCaptureDiagnosis {
+  status: ScreenPermissionStatus;
+  blank: boolean;
+}
+
 /**
  * Persisted, non-secret settings. The OpenAI key is NEVER stored here — it
  * lives encrypted in the OS keychain via safeStorage (see main/keys.ts).
@@ -336,6 +365,8 @@ export interface Settings {
   ttsInstructions: string;
   /** Pitch shift for the spoken voice in semitones (applied on playback). */
   voicePitch: number;
+  /** Offline (Kokoro) voice speaker id — one of OFFLINE_TTS_SPEAKERS. */
+  offlineTtsSpeaker: number;
   /** Play the procedural musical tone softly under the spoken line. */
   musicUnderlay: boolean;
   /**
@@ -413,7 +444,7 @@ export const DEFAULT_SETTINGS: Settings = {
   strictInterval: false,
   muted: false,
   provider: 'local',
-  ollamaModel: 'llama3.2-vision',
+  ollamaModel: 'qwen2.5vl:7b',
   ollamaHost: 'http://localhost:11434',
   openaiModel: 'gpt-5.4-mini',
   remarkStyle: 'realistic',
@@ -423,6 +454,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsConsentGiven: false,
   ttsInstructions: DEFAULT_TTS_INSTRUCTIONS,
   voicePitch: 0,
+  offlineTtsSpeaker: 6, // am_michael — warm male, closest to the cloud voice
   musicUnderlay: true,
   expressiveCadence: true,
   // Fresh installs show the bundled official skin (seeded into userData/skins on

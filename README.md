@@ -122,10 +122,10 @@ signatures differ per build, so macOS treats each new version as a brand-new
 app. Expect up to three one-time prompts after an update:
 
 1. Run the `xattr` command again if macOS refuses to open the app.
-2. **Re-grant Screen Recording** (System Settings → Privacy & Security → Screen
-   Recording — toggle Rocky Companion **off and back on**, then relaunch). If
-   the toggle already looks ON but Rocky still reports denied, that stale
-   toggle belongs to the previous copy — flipping it off/on fixes it.
+2. **Re-grant Screen Recording** — open Settings → Screen recording and click
+   **Fix screen permission**: it clears the stale grant, reopens System
+   Settings so you can enable Rocky Companion fresh, then relaunch. (The stale
+   toggle in System Settings belongs to the previous copy of the app.)
 3. A keychain prompt — *"Rocky Companion wants to access key 'rocky-companion
    Safe Storage'"* — appears because the new build's signature no longer
    matches the one that created the item. Enter your Mac login password and
@@ -191,17 +191,17 @@ Everything stays on your machine. Recommended for privacy.
 2. Pull a vision model:
 
    ```bash
-   ollama pull llama3.2-vision
+   ollama pull qwen2.5vl:7b
    ```
 
-   `llama3.2-vision` (11B) is the default and gives the richest observations,
-   but it is heavy: on a modest machine its first load into memory can be slow
-   enough that Rocky reports a timeout. If that happens, pick a lighter
-   **vision-capable** model instead:
+   `qwen2.5vl:7b` is the default — it reads screens noticeably better than the
+   older `llama3.2-vision` (11B) while being lighter to load. Alternatives,
+   all **vision-capable**:
 
    ```bash
-   ollama pull gemma3:4b   # light, multimodal, good balance
-   ollama pull moondream   # ~1.7B, fastest, lowest memory
+   ollama pull llama3.2-vision  # 11B, heavier alternative
+   ollama pull gemma3:4b        # light, multimodal, good balance
+   ollama pull moondream        # ~1.7B, fastest, lowest memory
    ```
 
    > The model **must** support images. Text-only models — `gemma3:1b`,
@@ -252,10 +252,12 @@ To capture the screen at all, macOS requires the **Screen Recording** permission
    your terminal app).
 3. **Relaunch** the app after granting — macOS only applies the change on a fresh
    launch (Settings → Screen recording has a **Relaunch Rocky** button).
-4. **If the toggle is already ON but Rocky still says denied:** the grant
-   belongs to an older copy of the app (unsigned builds look like a new app to
-   macOS after every update). Toggle it **off and back on**, then relaunch. As a
-   last resort, run `tccutil reset ScreenCapture` in Terminal and grant again.
+4. **If the toggle is already ON but Rocky still can't see:** the grant belongs
+   to an older copy of the app (unsigned builds look like a new app to macOS
+   after every update). Rocky detects this — Settings → Screen recording shows
+   *"captures come back black"* — and the **Fix screen permission** button
+   clears the stale grant and walks you through re-granting. As a last resort,
+   run `tccutil reset ScreenCapture` in Terminal and grant again.
 
 Without this permission, captures come back **blank/black**, and Rocky will tell
 you his eyes are cloudy rather than pretend he can see. Rocky surfaces the
@@ -281,11 +283,17 @@ You can adjust Rocky's behavior from the **tray menu** or the **Settings** windo
 
 ### Voice
 
-Rocky has two voice modes, set in **Settings → Voice**:
+Rocky has three voice modes, set in **Settings → Voice**:
 
 - **Eridian chords (procedural)** — the default. Each syllable is a five-tone
   chord synthesized on-device, with mood changing register, harmonic tension,
   pacing, and timbre. No audio files, account, or network call is involved.
+- **Spoken voice (offline, on-device)** — a bundled neural voice (the
+  Apache-2.0 **Kokoro** model, run by sherpa-onnx) on **macOS and Windows** —
+  no key, no network, great with Ollama. Pick between a few of the model's
+  built-in synthetic speakers in Settings (none modeled on any real person),
+  and the same **expressive cadence** phrase pacing as the cloud voice applies.
+  On other platforms the OS speech engine is used instead.
 - **Spoken translation (OpenAI TTS)** — optional. Rocky's translated line can be read aloud using
   a configurable OpenAI TTS model (`tts-1` / `tts-1-hd` for the plain natural
   preset, or `gpt-4o-mini-tts` for a steerable delivery) and one of **OpenAI's
@@ -381,9 +389,19 @@ can talk with him about your own notes.
   now / Later** buttons. The check is entirely local and throttled to once a
   week; the reflection itself runs only if you accept. Turn it off in Settings.
 - **Speech-to-text, local by default.** The default backend is
-  [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
-  (`brew install whisper-cpp`, plus a ggml model file you point Settings at) —
-  fully on-device. The optional **Cloud (OpenAI)** backend transcribes with
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — fully on-device —
+  plus a ggml model file you point Settings at.
+  - **macOS:** `brew install whisper-cpp` provides `whisper-cli`; a bare name
+    in Settings is found on PATH and the Homebrew locations.
+  - **Windows:** download `whisper-bin-x64.zip` from the
+    [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases),
+    extract it, and set the **full path** to `whisper-cli.exe` in Settings
+    (e.g. `C:\whisper\whisper-cli.exe`). A bare `whisper-cli` also works if its
+    folder is on PATH — Rocky checks PATH plus winget/scoop/chocolatey
+    locations and `C:\whisper`. If the CLI fails to start, install the
+    [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+
+  The optional **Cloud (OpenAI)** backend transcribes with
   your own key and is gated behind a **separate notes-cloud consent**.
   (One caveat for the local path: `whisper-cli` reads from a file, so the
   recording is written to a transient owner-only temp file and deleted right

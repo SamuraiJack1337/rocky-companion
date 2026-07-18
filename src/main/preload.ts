@@ -19,6 +19,8 @@ import type {
   RockyReply,
   RockyState,
   ScreenPermissionStatus,
+  ScreenPermissionResetResult,
+  ScreenCaptureDiagnosis,
   OllamaStatus,
   KeyResult,
   SkinInfo,
@@ -46,6 +48,9 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: RockyAPI = {
+  // host OS, for platform-appropriate help text in the renderer
+  platform: process.platform,
+
   // settings
   getSettings: () => ipcRenderer.invoke(CH.SETTINGS_GET) as Promise<Settings>,
   setSettings: (patch: Partial<Settings>) =>
@@ -74,6 +79,10 @@ const api: RockyAPI = {
   checkScreenPermission: () =>
     ipcRenderer.invoke(CH.SCREEN_PERMISSION_CHECK) as Promise<ScreenPermissionStatus>,
   openScreenSettings: () => ipcRenderer.invoke(CH.SCREEN_PERMISSION_OPEN) as Promise<void>,
+  resetScreenPermission: () =>
+    ipcRenderer.invoke(CH.SCREEN_PERMISSION_RESET) as Promise<ScreenPermissionResetResult>,
+  diagnoseScreenCapture: () =>
+    ipcRenderer.invoke(CH.CAPTURE_DIAGNOSE) as Promise<ScreenCaptureDiagnosis>,
   relaunchApp: () => ipcRenderer.invoke(CH.RELAUNCH) as Promise<void>,
 
   // consent + lifecycle

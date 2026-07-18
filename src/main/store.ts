@@ -185,6 +185,14 @@ class SettingsStore {
       DEFAULT_SETTINGS.openaiEmbedModel,
       64,
     );
+    // Offline voice speaker: a small non-negative integer (a voices.bin row).
+    if (
+      !Number.isInteger(merged.offlineTtsSpeaker) ||
+      merged.offlineTtsSpeaker < 0 ||
+      merged.offlineTtsSpeaker > 200
+    ) {
+      merged.offlineTtsSpeaker = DEFAULT_SETTINGS.offlineTtsSpeaker;
+    }
     return merged;
   }
 
