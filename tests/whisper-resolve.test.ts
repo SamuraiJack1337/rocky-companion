@@ -24,7 +24,16 @@ test('empty and whitespace input resolve to null', () => {
   assert.equal(resolveWhisperCli('   '), null);
 });
 
-test('bare name is found on PATH (posix)', () => {
+// Simulating a POSIX PATH (':'-delimited) needs a colon-free filesystem path;
+// on a Windows runner the temp dir is `C:\...`, whose drive-letter colon would
+// (correctly) be split as a POSIX delimiter. Skip the darwin-on-disk positive
+// case there — the win32 cases below cover Windows resolution directly.
+const posixHostOnly =
+  process.platform === 'win32'
+    ? { skip: 'darwin PATH simulation needs a colon-free (POSIX) temp path' }
+    : {};
+
+test('bare name is found on PATH (posix)', posixHostOnly, () => {
   const dir = tempDir();
   const exe = touchExe(dir, 'whisper-cli');
   const found = resolveWhisperCli('whisper-cli', {
