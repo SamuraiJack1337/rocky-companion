@@ -5,15 +5,14 @@ faceless five-limbed Eridian engineer: an intelligent collaborator who observes
 only broad activity categories, speaks in five-part musical chords, and uses a
 compact translator to work alongside you.
 
-> ## 🧪 Preview channel: the Thinking Companion (`0.4.0-beta`)
+> ## 🧠 New in 0.4.0: the Thinking Companion
 >
-> This build is an **opt-in preview** that layers a large new feature set on top
-> of stable Rocky — push-to-talk **voice notes**, a local **notebook**, a **chat**
-> window, and **weekly reflections**. It ships as a GitHub **pre-release**, so it
-> is deliberately **not** auto-offered to stable `0.3.x` users; grab it only if
-> you want to try the new companion features. Everything from stable Rocky
-> (offline neural voice, the Ollama connection fix, the bundled skin) is included
-> and unchanged. Expect rough edges.
+> Rocky is now a thinking companion, not just an observer. One global
+> push-to-talk key and he figures out what you meant: plain statements become
+> **voice notes** in a local **notebook**, questions get **spoken answers**, and
+> "research X" launches **background web research** he announces out loud when
+> it's done. Plus a **chat** window over your notes, **weekly reflections**, a
+> **decision journal**, and web access behind its own explicit consent gate.
 
 > ## No API key in this repo. Ever.
 >
@@ -40,8 +39,8 @@ Rocky is an [Electron](https://www.electronjs.org/) + TypeScript desktop compani
   five articulated limbs, three digits per limb, and a musical language.
 - **Rights-controlled.** The MIT license covers the software implementation only; Project Hail Mary
   characters, names, likenesses, and other underlying IP are not relicensed.
-- **macOS-first.** Phase 1 targets macOS. Windows support is a future,
-  non-committed idea (see [Future](#future)).
+- **macOS-first, Windows included.** macOS is the primary target; each release
+  also ships an unsigned Windows installer with the same feature set.
 
 ---
 
@@ -517,7 +516,6 @@ Ideas explicitly **not** part of Phase 1, and not promised:
 - **Hosted proxy.** A real server-side option is a business/operational decision,
   not a code toggle. If it ever happens, it will run as a proper service — it will
   **never bake a shared key into the app**.
-- **Windows support.**
 - **Cloud sync** of settings.
 
 ### Long-term vision
