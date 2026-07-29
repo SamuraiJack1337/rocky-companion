@@ -5,6 +5,16 @@ faceless five-limbed Eridian engineer: an intelligent collaborator who observes
 only broad activity categories, speaks in five-part musical chords, and uses a
 compact translator to work alongside you.
 
+> ## 🧪 Preview channel: the Thinking Companion (`0.4.0-beta`)
+>
+> This build is an **opt-in preview** that layers a large new feature set on top
+> of stable Rocky — push-to-talk **voice notes**, a local **notebook**, a **chat**
+> window, and **weekly reflections**. It ships as a GitHub **pre-release**, so it
+> is deliberately **not** auto-offered to stable `0.3.x` users; grab it only if
+> you want to try the new companion features. Everything from stable Rocky
+> (offline neural voice, the Ollama connection fix, the bundled skin) is included
+> and unchanged. Expect rough edges.
+
 > ## No API key in this repo. Ever.
 >
 > **This repository contains NO API key, and it never will.** There is no shared
@@ -112,10 +122,10 @@ signatures differ per build, so macOS treats each new version as a brand-new
 app. Expect up to three one-time prompts after an update:
 
 1. Run the `xattr` command again if macOS refuses to open the app.
-2. **Re-grant Screen Recording** (System Settings → Privacy & Security → Screen
-   Recording — toggle Rocky Companion **off and back on**, then relaunch). If
-   the toggle already looks ON but Rocky still reports denied, that stale
-   toggle belongs to the previous copy — flipping it off/on fixes it.
+2. **Re-grant Screen Recording** — open Settings → Screen recording and click
+   **Fix screen permission**: it clears the stale grant, reopens System
+   Settings so you can enable Rocky Companion fresh, then relaunch. (The stale
+   toggle in System Settings belongs to the previous copy of the app.)
 3. A keychain prompt — *"Rocky Companion wants to access key 'rocky-companion
    Safe Storage'"* — appears because the new build's signature no longer
    matches the one that created the item. Enter your Mac login password and
@@ -181,17 +191,17 @@ Everything stays on your machine. Recommended for privacy.
 2. Pull a vision model:
 
    ```bash
-   ollama pull llama3.2-vision
+   ollama pull qwen2.5vl:7b
    ```
 
-   `llama3.2-vision` (11B) is the default and gives the richest observations,
-   but it is heavy: on a modest machine its first load into memory can be slow
-   enough that Rocky reports a timeout. If that happens, pick a lighter
-   **vision-capable** model instead:
+   `qwen2.5vl:7b` is the default — it reads screens noticeably better than the
+   older `llama3.2-vision` (11B) while being lighter to load. Alternatives,
+   all **vision-capable**:
 
    ```bash
-   ollama pull gemma3:4b   # light, multimodal, good balance
-   ollama pull moondream   # ~1.7B, fastest, lowest memory
+   ollama pull llama3.2-vision  # 11B, heavier alternative
+   ollama pull gemma3:4b        # light, multimodal, good balance
+   ollama pull moondream        # ~1.7B, fastest, lowest memory
    ```
 
    > The model **must** support images. Text-only models — `gemma3:1b`,
@@ -242,10 +252,12 @@ To capture the screen at all, macOS requires the **Screen Recording** permission
    your terminal app).
 3. **Relaunch** the app after granting — macOS only applies the change on a fresh
    launch (Settings → Screen recording has a **Relaunch Rocky** button).
-4. **If the toggle is already ON but Rocky still says denied:** the grant
-   belongs to an older copy of the app (unsigned builds look like a new app to
-   macOS after every update). Toggle it **off and back on**, then relaunch. As a
-   last resort, run `tccutil reset ScreenCapture` in Terminal and grant again.
+4. **If the toggle is already ON but Rocky still can't see:** the grant belongs
+   to an older copy of the app (unsigned builds look like a new app to macOS
+   after every update). Rocky detects this — Settings → Screen recording shows
+   *"captures come back black"* — and the **Fix screen permission** button
+   clears the stale grant and walks you through re-granting. As a last resort,
+   run `tccutil reset ScreenCapture` in Terminal and grant again.
 
 Without this permission, captures come back **blank/black**, and Rocky will tell
 you his eyes are cloudy rather than pretend he can see. Rocky surfaces the
@@ -271,11 +283,17 @@ You can adjust Rocky's behavior from the **tray menu** or the **Settings** windo
 
 ### Voice
 
-Rocky has two voice modes, set in **Settings → Voice**:
+Rocky has three voice modes, set in **Settings → Voice**:
 
 - **Eridian chords (procedural)** — the default. Each syllable is a five-tone
   chord synthesized on-device, with mood changing register, harmonic tension,
   pacing, and timbre. No audio files, account, or network call is involved.
+- **Spoken voice (offline, on-device)** — a bundled neural voice (the
+  Apache-2.0 **Kokoro** model, run by sherpa-onnx) on **macOS and Windows** —
+  no key, no network, great with Ollama. Pick between a few of the model's
+  built-in synthetic speakers in Settings (none modeled on any real person),
+  and the same **expressive cadence** phrase pacing as the cloud voice applies.
+  On other platforms the OS speech engine is used instead.
 - **Spoken translation (OpenAI TTS)** — optional. Rocky's translated line can be read aloud using
   a configurable OpenAI TTS model (`tts-1` / `tts-1-hd` for the plain natural
   preset, or `gpt-4o-mini-tts` for a steerable delivery) and one of **OpenAI's
@@ -341,6 +359,58 @@ still feels alive. Skin images are read by the main process and handed to the
 renderer in-memory; the renderer never reads the filesystem. (Only original or
 properly licensed art should be placed here.)
 
+### Rocky Notes — voice notes + conversation (Stage 1)
+
+Rocky is also a thinking companion: speak a thought, he keeps it, and later you
+can talk with him about your own notes.
+
+- **Push-to-talk voice notes.** Press the global shortcut (default
+  **⌘⇧Space**, configurable in Settings) anywhere, speak, press again. You can
+  also **press-and-hold Rocky himself** to start/stop a note, or use **Talk
+  (voice note)** in his quick-controls popover. Rocky transcribes the recording
+  into his notebook and confirms out loud with a snippet, so a mishearing is
+  immediately visible. The microphone is live only between your two presses;
+  audio is transcribed **in memory and discarded** (never stored).
+- **Notebook.** Notes live in a local, owner-only file
+  (`notes.json` under the app's user folder). Open **Notes & chat…** from the
+  tray (or Rocky's popover) to read, add, or delete them — including **Delete
+  all**. Each note has a **Discuss** button that jumps into the chat seeded
+  with that note, and notes are auto-tagged with 1–3 coarse **topics** you can
+  filter by (tagging is local/best-effort — untagged notes are fine).
+- **Talk about your notes.** The chat tab answers questions like *"what did I
+  say about that project?"* using retrieval over your own notes (embeddings
+  when available, keyword search otherwise), in Rocky's voice. Reflection
+  buttons ask for a summary, cross-note connections, follow-up questions, or a
+  weekly reflection — also reachable from Rocky's popover and the tray's
+  **Reflect** submenu. Conversations are **in-memory only** — closing the
+  window forgets the chat; only notes persist.
+- **Weekly reflection nudge.** On Friday afternoons, if you captured 3+ notes
+  that week, Rocky offers a weekly reflection in a speech bubble with **Reflect
+  now / Later** buttons. The check is entirely local and throttled to once a
+  week; the reflection itself runs only if you accept. Turn it off in Settings.
+- **Speech-to-text, local by default.** The default backend is
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — fully on-device —
+  plus a ggml model file you point Settings at.
+  - **macOS:** `brew install whisper-cpp` provides `whisper-cli`; a bare name
+    in Settings is found on PATH and the Homebrew locations.
+  - **Windows:** download `whisper-bin-x64.zip` from the
+    [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases),
+    extract it, and set the **full path** to `whisper-cli.exe` in Settings
+    (e.g. `C:\whisper\whisper-cli.exe`). A bare `whisper-cli` also works if its
+    folder is on PATH — Rocky checks PATH plus winget/scoop/chocolatey
+    locations and `C:\whisper`. If the CLI fails to start, install the
+    [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+
+  The optional **Cloud (OpenAI)** backend transcribes with
+  your own key and is gated behind a **separate notes-cloud consent**.
+  (One caveat for the local path: `whisper-cli` reads from a file, so the
+  recording is written to a transient owner-only temp file and deleted right
+  after transcription.)
+- **Chat + retrieval follow your vision provider.** Local (Ollama) chats with
+  `ollamaChatModel` (or your vision model) and embeds with `nomic-embed-text`;
+  Cloud (OpenAI) is used only when you have given the notes-cloud consent —
+  note **text** is exactly what gets sent, so it has its own switch.
+
 ### Rocky Lab
 
 Open **Rocky Lab…** from the tray for the interactive companion tools:
@@ -371,6 +441,10 @@ The menu-bar (tray) icon gives you quick access to:
 - **Start 25 min focus / Focus (active)** — start a focus-watch session, or
   cancel the one in progress.
 - **Fist bump** — trigger the shared completion ritual.
+- **Talk to Rocky (voice note)** — start/stop a push-to-talk note (same as the shortcut).
+- **Notes & chat…** — open the notebook and the conversation window.
+- **Reflect ▸** — submenu to open the chat and auto-run a summary, connections,
+  questions, or a weekly reflection over your notes.
 - **Rocky Lab…** — open focus, engineering, and relationship tools.
 - **Settings…** — open the full settings window.
 - **Quit** — exit the app.
@@ -472,6 +546,16 @@ a passive observer.
   display name.
 - **Relationship memory contains counters and timestamps only** and can be reset
   from Rocky Lab.
+- **Notes are the one thing Rocky persists that you author** — always
+  user-initiated (push-to-talk or typed), stored in a local owner-only file,
+  deletable one-by-one or all at once. Voice-note **audio is never stored**:
+  it is transcribed and discarded (the local whisper.cpp path uses a transient
+  owner-only temp file, removed immediately after).
+- **Note data never reaches a cloud without its own consent** — cloud
+  speech-to-text, chat about notes, and cloud embeddings are all gated behind
+  a separate notes-cloud opt-in, independent of the screenshot consent.
+- **The microphone is live only during a push-to-talk capture** (between your
+  two presses), with Rocky visibly in his listening pose.
 
 ---
 

@@ -5,27 +5,57 @@
 // Secrets never cross into the renderer: the OpenAI key is validated and stored
 // here and never returned to any window.
 
-import { app, ipcMain, BrowserWindow } from 'electron';
-import { CH } from '../shared/ipc';
+import { app, ipcMain, BrowserWindow, shell } from 'electron';
+import { CH, EV } from '../shared/ipc';
 import type { ConsentPayload } from '../shared/ipc';
-import type { EngineeringRequest, RockyReply, Settings } from '../shared/types';
+import type {
+  ChatMessage,
+  DecisionDraft,
+  EngineeringRequest,
+  NoteView,
+  ReflectionKind,
+  RockyReply,
+  Settings,
+} from '../shared/types';
 import { store } from './store';
 import { hasOpenAIKey, setOpenAIKey, deleteOpenAIKey } from './keys';
-import { getScreenPermission, openScreenSettings } from './permissions';
+import {
+  getMicPermission,
+  getScreenPermission,
+  openScreenSettings,
+  requestMicPermission,
+  resetScreenPermission,
+} from './permissions';
+import { captureScreen } from './capture';
 import { probeOllama, validateOpenAIKey } from './providers/VisionProvider';
+import { createSpeechProvider } from './providers/SpeechProvider';
 import { synthesizeSpeech } from './tts';
-import { synthesizePiper } from './piperTts';
+import { synthesizeOffline } from './offlineTts';
 import { listSkins, loadSkin, openSkinsFolder } from './assets';
-import { showLabWindow, showSettingsWindow } from './windows';
+import {
+  sendToChat,
+  showChatWindow,
+  showLabWindow,
+  showSettingsWindow,
+} from './windows';
+import { renderLine } from '../shared/lines';
 import type { TtsOverrides } from '../shared/ipc';
 import type { Scheduler } from './scheduler';
 import type { FocusManager } from './focus';
 import { memory } from './memory';
+import { notes } from './notes';
 import { solveEngineering } from './engineering';
+import { chatWithRocky, distillDecision, reflectOnNotes } from './chat';
+import { chatHistory } from './chatHistory';
+import { decisions } from './decisions';
+import { research } from './research';
+import { startDetachedResearch } from './researchTask';
+import type { VoiceNotesController } from './voiceNotes';
 import {
   calculationReply,
   focusCancelledReply,
   focusStartedReply,
+  researchAckReply,
 } from '../shared/persona';
 
 export interface IpcDeps {
@@ -44,6 +74,10 @@ export interface IpcDeps {
   openUpdate: () => void;
   dismissUpdate: () => void;
   farewellAndQuit: () => void;
+  /** Push-to-talk orchestration (defined in main.ts, one instance). */
+  voiceNotes: VoiceNotesController;
+  /** A note was saved from any surface — broadcast so notebooks refresh. */
+  broadcastNoteSaved: (note: NoteView) => void;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -73,11 +107,17 @@ export function registerIpc(deps: IpcDeps): void {
       synthesizeSpeech(args?.text ?? '', args?.overrides),
   );
 
-  // Offline neural voice (Piper) — no key, fully on-device. Null when the
-  // engine isn't bundled for this platform, so callers fall back to the OS voice.
-  ipcMain.handle(CH.TTS_SPEAK_OFFLINE, (_e, args: { text: string }) =>
-    synthesizePiper(args?.text ?? ''),
-  );
+  // Offline neural voice (Kokoro via sherpa-onnx) — no key, fully on-device.
+  // Null when the engine isn't bundled for this platform, so callers fall back
+  // to the OS voice. Speaker + cadence come from settings, resolved here so the
+  // synth module stays electron-light and testable.
+  ipcMain.handle(CH.TTS_SPEAK_OFFLINE, (_e, args: { text: string }) => {
+    const s = store.get();
+    return synthesizeOffline(args?.text ?? '', {
+      sid: s.offlineTtsSpeaker,
+      cadence: s.expressiveCadence,
+    });
+  });
 
   // ── creature skins (drop-in art) ──────────────────────────────────────────
   ipcMain.handle(CH.SKINS_LIST, () => listSkins());
@@ -92,6 +132,20 @@ export function registerIpc(deps: IpcDeps): void {
   );
   ipcMain.handle(CH.SCREEN_PERMISSION_CHECK, () => getScreenPermission());
   ipcMain.handle(CH.SCREEN_PERMISSION_OPEN, () => openScreenSettings());
+  ipcMain.handle(CH.SCREEN_PERMISSION_RESET, () => resetScreenPermission());
+  // One cheap in-memory test capture + the status. `granted` + `blank` is the
+  // stale-TCC-grant signature the settings window keys its "Fix" button on.
+  ipcMain.handle(CH.CAPTURE_DIAGNOSE, async () => {
+    const status = getScreenPermission();
+    let blank = true;
+    try {
+      const shot = await captureScreen(256);
+      blank = shot.blank || !shot.base64;
+    } catch {
+      // Capture threw outright — treat as blank; status tells the rest.
+    }
+    return { status, blank };
+  });
   // macOS applies a Screen Recording grant only to a fresh launch, so the
   // settings window offers a one-click relaunch after the user flips the toggle.
   ipcMain.handle(CH.RELAUNCH, () => {
@@ -152,6 +206,137 @@ export function registerIpc(deps: IpcDeps): void {
   });
   ipcMain.handle(CH.UPDATE_OPEN, () => deps.openUpdate());
   ipcMain.handle(CH.UPDATE_DISMISS, () => deps.dismissUpdate());
+
+  // ── notes + voice input (Stage 1) ─────────────────────────────────────────
+  ipcMain.handle(CH.MIC_PERMISSION_CHECK, () => getMicPermission());
+  ipcMain.handle(CH.MIC_PERMISSION_REQUEST, () => requestMicPermission());
+  ipcMain.handle(CH.SPEECH_SETUP_CHECK, async () => {
+    const s = store.get();
+    const provider = createSpeechProvider(s);
+    const readiness = await provider.ready();
+    return { ok: readiness.ok, provider: provider.kind, error: readiness.error };
+  });
+  ipcMain.handle(CH.PTT_TOGGLE, () => deps.voiceNotes.toggle());
+  ipcMain.handle(CH.VOICE_NOTE_SUBMIT, (_e, wavBase64: string) =>
+    deps.voiceNotes.submit(typeof wavBase64 === 'string' ? wavBase64 : ''),
+  );
+  ipcMain.on(CH.VOICE_NOTE_CANCEL, (_e, reason?: string) =>
+    deps.voiceNotes.cancel(typeof reason === 'string' ? reason : undefined),
+  );
+  ipcMain.handle(CH.VOICE_TRANSCRIBE, (_e, wavBase64: string) =>
+    deps.voiceNotes.transcribe(typeof wavBase64 === 'string' ? wavBase64 : ''),
+  );
+  ipcMain.handle(CH.NOTES_LIST, () => notes.list());
+  ipcMain.handle(CH.NOTES_ADD, (_e, text: string) => {
+    const note = notes.add(typeof text === 'string' ? text : '', 'chat');
+    if (!note) return { ok: false, error: 'Nothing to keep.' };
+    deps.broadcastNoteSaved(note);
+    // Embedding + topic tags in the background; retrieval falls back to
+    // keywords and the notebook shows no chips until they land.
+    deps.voiceNotes.enrichInBackground(note);
+    return { ok: true, note };
+  });
+  ipcMain.handle(CH.NOTES_DELETE, (_e, id: string) => {
+    if (typeof id === 'string') notes.delete(id);
+  });
+  ipcMain.handle(CH.NOTES_CLEAR, () => notes.clear());
+  ipcMain.handle(CH.CHAT_SEND, async (e, messages: ChatMessage[]) => {
+    const history = Array.isArray(messages) ? messages : [];
+    // Progress lines target only the asking window (not a broadcast).
+    const onProgress = (line: string) => {
+      if (!e.sender.isDestroyed()) e.sender.send(EV.CHAT_PROGRESS, { line });
+    };
+    let result = await chatWithRocky(history, store.get(), onProgress);
+    // The model routed this turn into a research task (start_research tool):
+    // kick off the detached run and answer with the in-persona ack instead.
+    if (result.ok && result.startResearch) {
+      const start = startDetachedResearch(result.startResearch, deps.emitReply, onProgress);
+      const name = store.get().callName;
+      result = start.started
+        ? { ...result, reply: researchAckReply(name).line }
+        : {
+            ...result,
+            startResearch: undefined,
+            reply: start.error ?? renderLine('Rocky could not start that research, {name}.', { name }),
+          };
+    }
+    // Persist the turn on success so the transcript survives window close.
+    if (result.ok && result.reply) {
+      const latestUser = [...history].reverse().find((m) => m && m.role === 'user');
+      if (latestUser) chatHistory.append({ role: 'user', text: latestUser.text });
+      chatHistory.append({ role: 'rocky', text: result.reply });
+    }
+    return result;
+  });
+  ipcMain.handle(CH.CHAT_REFLECT, (_e, kind: ReflectionKind) =>
+    reflectOnNotes(kind, store.get()),
+  );
+  ipcMain.handle(CH.OPEN_CHAT, (_e, reflect?: ReflectionKind) => {
+    showChatWindow();
+    if (
+      reflect === 'summarize' ||
+      reflect === 'connections' ||
+      reflect === 'questions' ||
+      reflect === 'weekly'
+    ) {
+      sendToChat(EV.CHAT_ACTION, { reflect });
+    }
+  });
+
+  // ── chat history, research, decisions, external links (Stage 2) ────────────
+  ipcMain.handle(CH.CHAT_HISTORY_GET, () => chatHistory.list());
+  ipcMain.handle(CH.CHAT_HISTORY_CLEAR, () => chatHistory.clear());
+
+  // Research is fire-and-forget: the handler resolves as soon as the task is
+  // accepted, chat stays usable, and the finished report comes back later as a
+  // broadcast (the asking window may be closed by then) plus a companion
+  // bubble whose line Rocky speaks — the JARVIS loop. The runner itself lives
+  // in researchTask.ts, shared with the push-to-talk voice route.
+  ipcMain.handle(CH.RESEARCH_START, (e, rawTopic: string) => {
+    const onProgress = (line: string) => {
+      if (!e.sender.isDestroyed()) e.sender.send(EV.CHAT_PROGRESS, { line });
+    };
+    return startDetachedResearch(
+      typeof rawTopic === 'string' ? rawTopic : '',
+      deps.emitReply,
+      onProgress,
+    );
+  });
+  ipcMain.handle(CH.RESEARCH_CANCEL, () => research.cancel());
+
+  ipcMain.handle(CH.DECISION_DISTILL, (_e, messages: ChatMessage[]) =>
+    distillDecision(Array.isArray(messages) ? messages : [], store.get()),
+  );
+  ipcMain.handle(CH.DECISION_LOG, (_e, draft: DecisionDraft) => {
+    if (!draft || typeof draft.decision !== 'string') return null;
+    return decisions.add({
+      decision: draft.decision,
+      reasons: typeof draft.reasons === 'string' ? draft.reasons : '',
+      expectedOutcome: typeof draft.expectedOutcome === 'string' ? draft.expectedOutcome : '',
+    });
+  });
+  ipcMain.handle(CH.DECISION_LIST, () => decisions.list());
+  ipcMain.handle(CH.DECISION_RESOLVE, (_e, args: { id: string; resolution: string }) => {
+    if (args && typeof args.id === 'string') {
+      decisions.resolve(args.id, typeof args.resolution === 'string' ? args.resolution : '');
+    }
+  });
+  ipcMain.handle(CH.DECISION_DELETE, (_e, id: string) => {
+    if (typeof id === 'string') decisions.delete(id);
+  });
+
+  ipcMain.handle(CH.OPEN_EXTERNAL, (_e, url: string) => {
+    // http/https only — never file:, javascript:, etc.
+    try {
+      const parsed = new URL(typeof url === 'string' ? url : '');
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        void shell.openExternal(parsed.toString());
+      }
+    } catch {
+      /* not a valid URL — ignore */
+    }
+  });
+
   ipcMain.handle(CH.QUIT, () => {
     // Imported lazily to avoid a cycle; app is always available at runtime.
     deps.farewellAndQuit();

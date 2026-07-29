@@ -5,12 +5,25 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 import { CH, EV } from '../shared/ipc';
-import type { RockyAPI, ConsentPayload, TtsOverrides, TtsSegment, UpdatePrompt } from '../shared/ipc';
+import type {
+  RockyAPI,
+  ChatActionCommand,
+  ChatProgress,
+  ChatTurn,
+  ConsentPayload,
+  PttCommand,
+  ResearchDone,
+  TtsOverrides,
+  TtsSegment,
+  UpdatePrompt,
+} from '../shared/ipc';
 import type {
   Settings,
   RockyReply,
   RockyState,
   ScreenPermissionStatus,
+  ScreenPermissionResetResult,
+  ScreenCaptureDiagnosis,
   OllamaStatus,
   KeyResult,
   SkinInfo,
@@ -19,6 +32,19 @@ import type {
   EngineeringRequest,
   EngineeringResult,
   FocusState,
+  ChatMessage,
+  ChatResult,
+  DecisionDraft,
+  DecisionDraftResult,
+  DecisionRecord,
+  MicPermissionStatus,
+  NoteView,
+  ReflectionKind,
+  ResearchStart,
+  SpeechSetupStatus,
+  TranscriptionResult,
+  VoiceCaptureState,
+  VoiceNoteResult,
 } from '../shared/types';
 
 /** Subscribe to a push event; returns an unsubscribe function. */
@@ -29,6 +55,9 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: RockyAPI = {
+  // host OS, for platform-appropriate help text in the renderer
+  platform: process.platform,
+
   // settings
   getSettings: () => ipcRenderer.invoke(CH.SETTINGS_GET) as Promise<Settings>,
   setSettings: (patch: Partial<Settings>) =>
@@ -57,6 +86,10 @@ const api: RockyAPI = {
   checkScreenPermission: () =>
     ipcRenderer.invoke(CH.SCREEN_PERMISSION_CHECK) as Promise<ScreenPermissionStatus>,
   openScreenSettings: () => ipcRenderer.invoke(CH.SCREEN_PERMISSION_OPEN) as Promise<void>,
+  resetScreenPermission: () =>
+    ipcRenderer.invoke(CH.SCREEN_PERMISSION_RESET) as Promise<ScreenPermissionResetResult>,
+  diagnoseScreenCapture: () =>
+    ipcRenderer.invoke(CH.CAPTURE_DIAGNOSE) as Promise<ScreenCaptureDiagnosis>,
   relaunchApp: () => ipcRenderer.invoke(CH.RELAUNCH) as Promise<void>,
 
   // consent + lifecycle
@@ -84,7 +117,57 @@ const api: RockyAPI = {
   closeSelf: () => ipcRenderer.send(CH.CLOSE_WINDOW),
   quit: () => ipcRenderer.invoke(CH.QUIT) as Promise<void>,
 
+  // notes + voice input (Stage 1)
+  checkMicPermission: () =>
+    ipcRenderer.invoke(CH.MIC_PERMISSION_CHECK) as Promise<MicPermissionStatus>,
+  requestMicPermission: () =>
+    ipcRenderer.invoke(CH.MIC_PERMISSION_REQUEST) as Promise<MicPermissionStatus>,
+  checkSpeechSetup: () => ipcRenderer.invoke(CH.SPEECH_SETUP_CHECK) as Promise<SpeechSetupStatus>,
+  togglePushToTalk: () => ipcRenderer.invoke(CH.PTT_TOGGLE) as Promise<void>,
+  submitVoiceNote: (wavBase64: string) =>
+    ipcRenderer.invoke(CH.VOICE_NOTE_SUBMIT, wavBase64) as Promise<VoiceNoteResult>,
+  cancelVoiceNote: (reason?: string) => ipcRenderer.send(CH.VOICE_NOTE_CANCEL, reason),
+  transcribeVoice: (wavBase64: string) =>
+    ipcRenderer.invoke(CH.VOICE_TRANSCRIBE, wavBase64) as Promise<TranscriptionResult>,
+  listNotes: () => ipcRenderer.invoke(CH.NOTES_LIST) as Promise<NoteView[]>,
+  addNote: (text: string) => ipcRenderer.invoke(CH.NOTES_ADD, text) as Promise<VoiceNoteResult>,
+  deleteNote: (id: string) => ipcRenderer.invoke(CH.NOTES_DELETE, id) as Promise<void>,
+  clearNotes: () => ipcRenderer.invoke(CH.NOTES_CLEAR) as Promise<void>,
+  sendChat: (messages: ChatMessage[]) =>
+    ipcRenderer.invoke(CH.CHAT_SEND, messages) as Promise<ChatResult>,
+  reflect: (kind: ReflectionKind) =>
+    ipcRenderer.invoke(CH.CHAT_REFLECT, kind) as Promise<ChatResult>,
+  openChat: (reflect?: ReflectionKind) =>
+    ipcRenderer.invoke(CH.OPEN_CHAT, reflect) as Promise<void>,
+
+  // chat history, research, decisions, external links (Stage 2)
+  getChatHistory: () => ipcRenderer.invoke(CH.CHAT_HISTORY_GET) as Promise<ChatMessage[]>,
+  clearChatHistory: () => ipcRenderer.invoke(CH.CHAT_HISTORY_CLEAR) as Promise<void>,
+  startResearch: (topic: string) =>
+    ipcRenderer.invoke(CH.RESEARCH_START, topic) as Promise<ResearchStart>,
+  cancelResearch: () => ipcRenderer.invoke(CH.RESEARCH_CANCEL) as Promise<void>,
+  distillDecision: (messages: ChatMessage[]) =>
+    ipcRenderer.invoke(CH.DECISION_DISTILL, messages) as Promise<DecisionDraftResult>,
+  logDecision: (draft: DecisionDraft) =>
+    ipcRenderer.invoke(CH.DECISION_LOG, draft) as Promise<DecisionRecord | null>,
+  listDecisions: () => ipcRenderer.invoke(CH.DECISION_LIST) as Promise<DecisionRecord[]>,
+  resolveDecision: (id: string, resolution: string) =>
+    ipcRenderer.invoke(CH.DECISION_RESOLVE, { id, resolution }) as Promise<void>,
+  deleteDecision: (id: string) => ipcRenderer.invoke(CH.DECISION_DELETE, id) as Promise<void>,
+  openExternal: (url: string) => ipcRenderer.invoke(CH.OPEN_EXTERNAL, url) as Promise<void>,
+
   // push events (main → renderer)
+  onPtt: (cb: (cmd: PttCommand) => void) => subscribe<PttCommand>(EV.PTT, cb),
+  onVoiceState: (cb: (state: VoiceCaptureState) => void) =>
+    subscribe<VoiceCaptureState>(EV.VOICE_STATE, cb),
+  onNoteSaved: (cb: (note: NoteView) => void) => subscribe<NoteView>(EV.NOTE_SAVED, cb),
+  onChatAction: (cb: (cmd: ChatActionCommand) => void) =>
+    subscribe<ChatActionCommand>(EV.CHAT_ACTION, cb),
+  onChatTurn: (cb: (turn: ChatTurn) => void) => subscribe<ChatTurn>(EV.CHAT_TURN, cb),
+  onChatProgress: (cb: (progress: ChatProgress) => void) =>
+    subscribe<ChatProgress>(EV.CHAT_PROGRESS, cb),
+  onResearchDone: (cb: (done: ResearchDone) => void) =>
+    subscribe<ResearchDone>(EV.RESEARCH_DONE, cb),
   onReply: (cb: (reply: RockyReply) => void) => subscribe<RockyReply>(EV.REPLY, cb),
   onCaptureIndicator: (cb: () => void) => {
     const listener = () => cb();

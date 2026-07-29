@@ -82,6 +82,11 @@ export class Scheduler {
   private running = false; // guards against overlapping ticks
   private lastShownLine = '';
   private permissionHintShown = false;
+  /** Consecutive blank frames seen while permission reads granted — the
+   *  stale-TCC-grant signature (ad-hoc signature changed on update). A short
+   *  streak requirement keeps locked/idle screens from false-positives. */
+  private blankWhileGrantedStreak = 0;
+  private staleGrantHintShown = false;
   /** Controller for the capture/analysis currently in flight, if any. */
   private currentController: AbortController | null = null;
 
@@ -316,11 +321,33 @@ export class Scheduler {
               force,
             );
           }
+        } else {
+          // Granted, yet the OS hands us black frames. One-off black frames are
+          // normal (locked screen, screensaver); a streak of them means the TCC
+          // grant went stale after an update. Nudge once per resume.
+          this.blankWhileGrantedStreak += 1;
+          if (this.blankWhileGrantedStreak >= 3 && (!this.staleGrantHintShown || force)) {
+            this.staleGrantHintShown = true;
+            this.show(
+              {
+                line: renderLine(
+                  'My eyes say open but I see only night, {name}. Settings has a Fix screen permission button, question?',
+                  { name: settings.callName },
+                ),
+                mood: 'concerned',
+                activity: 'unknown',
+                gesture: 'alarm',
+                motif: 'concern',
+              },
+              force,
+            );
+          }
         }
-        // Granted but genuinely black/idle screen → stay calm, do nothing noisy.
         return;
       }
       this.permissionHintShown = false;
+      this.blankWhileGrantedStreak = 0;
+      this.staleGrantHintShown = false;
 
       let reply: RockyReply;
       try {

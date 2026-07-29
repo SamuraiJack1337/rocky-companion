@@ -162,6 +162,19 @@ export const TTS_VOICES: readonly string[] = [
 ];
 
 /**
+ * Offline (Kokoro) voice speakers surfaced in Settings — a curated subset of
+ * the model's built-in licensed speakers (ids are rows in voices.bin), labeled
+ * by character rather than internal name. Same synthetic-voice principle as
+ * TTS_VOICES: never modeled on or used to imitate a real person.
+ */
+export const OFFLINE_TTS_SPEAKERS: readonly { id: number; label: string }[] = [
+  { id: 6, label: 'Michael — warm (default)' },
+  { id: 5, label: 'Adam — deeper' },
+  { id: 9, label: 'George — British' },
+  { id: 10, label: 'Lewis — British, low' },
+];
+
+/**
  * Default delivery instruction for gpt-4o-mini-tts. A light, warm, friendly
  * read at a natural pace — this lifts the voice so it isn't heavy/neutral.
  * Shapes delivery STYLE only (pace, warmth, brightness), never identity.
@@ -234,6 +247,9 @@ export interface LoadedSkin {
   assets: Record<string, string>;
 }
 
+/** Replies that the companion renderer decorates with bubble buttons. */
+export type ReplyKind = 'listening' | 'note-saved' | 'weekly-offer';
+
 /** A single in-character reaction from Rocky. */
 export interface RockyReply {
   line: string;
@@ -241,6 +257,8 @@ export interface RockyReply {
   activity: Activity;
   gesture: RockyGesture;
   motif: EridianMotif;
+  /** Present only on replies whose bubble carries quick-action buttons. */
+  kind?: ReplyKind;
 }
 
 export type RelationshipStage = 'first-contact' | 'colleague' | 'buddy' | 'trusted-buddy';
@@ -294,6 +312,22 @@ export type ScreenPermissionStatus =
   | 'not-determined'
   | 'unknown';
 
+/** Outcome of the in-app `tccutil reset ScreenCapture` fix flow (macOS). */
+export interface ScreenPermissionResetResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * One test capture + the permission status, together. `blank` while `granted`
+ * is the signature of a stale TCC grant (ad-hoc signature changed on update):
+ * the System Settings toggle shows ON but the OS hands us black frames.
+ */
+export interface ScreenCaptureDiagnosis {
+  status: ScreenPermissionStatus;
+  blank: boolean;
+}
+
 /**
  * Persisted, non-secret settings. The OpenAI key is NEVER stored here — it
  * lives encrypted in the OS keychain via safeStorage (see main/keys.ts).
@@ -331,6 +365,8 @@ export interface Settings {
   ttsInstructions: string;
   /** Pitch shift for the spoken voice in semitones (applied on playback). */
   voicePitch: number;
+  /** Offline (Kokoro) voice speaker id — one of OFFLINE_TTS_SPEAKERS. */
+  offlineTtsSpeaker: number;
   /** Play the procedural musical tone softly under the spoken line. */
   musicUnderlay: boolean;
   /**
@@ -367,6 +403,46 @@ export interface Settings {
   cloudConsentGiven: boolean;
   /** Last on-screen window position (persisted across launches). */
   windowPosition: { x: number; y: number } | null;
+
+  // ── Notes + voice input (Stage 1) ─────────────────────────────────────────
+  /** Speech-to-text backend: 'local' (whisper.cpp CLI) or 'cloud' (OpenAI). */
+  speechProvider: ProviderKind;
+  /** Path or command name of the whisper.cpp CLI (e.g. from `brew install whisper-cpp`). */
+  whisperCliPath: string;
+  /** Path to a ggml/gguf Whisper model file (e.g. ggml-base.en.bin). Required for local STT. */
+  whisperModelPath: string;
+  /** OpenAI transcription model (cloud STT). */
+  sttModel: string;
+  /**
+   * Separate explicit opt-in required before ANY note data (voice audio, note
+   * text, chat about notes, embeddings) is sent to OpenAI. Without it, the
+   * cloud paths for notes fall back to local or fail gracefully.
+   */
+  notesCloudConsentGiven: boolean;
+  /** Global push-to-talk accelerator (toggle: press to record, press to stop). */
+  pushToTalkShortcut: string;
+  /** Ollama model for chat about notes. Empty = reuse ollamaModel. */
+  ollamaChatModel: string;
+  /** Ollama embedding model for note retrieval. */
+  ollamaEmbedModel: string;
+  /** OpenAI embedding model for note retrieval (cloud, consent-gated). */
+  openaiEmbedModel: string;
+  /** Rocky may offer a weekly reflection (Friday afternoon, 3+ notes that week). */
+  weeklyReflectionNudge: boolean;
+  /** ISO timestamp of the last weekly-reflection offer (rate limiting). */
+  lastWeeklyNudgeISO: string | null;
+
+  // ── Web access (Stage 2: research + conversation) ─────────────────────────
+  /** Rocky may search the web and read pages during chat and research. */
+  webSearchEnabled: boolean;
+  /**
+   * Separate explicit opt-in required before ANY search text or page address
+   * leaves the machine (to the search service and the pages Rocky reads).
+   * Applies in BOTH provider modes — local users chose local for privacy, so
+   * web egress is its own decision. Without it, webSearchEnabled is coerced
+   * back off (see store.ts) and Rocky stays notebook-only.
+   */
+  webSearchConsentGiven: boolean;
 }
 
 export const INTERVAL_MIN = 1;
@@ -380,7 +456,7 @@ export const DEFAULT_SETTINGS: Settings = {
   strictInterval: false,
   muted: false,
   provider: 'local',
-  ollamaModel: 'llama3.2-vision',
+  ollamaModel: 'qwen2.5vl:7b',
   ollamaHost: 'http://localhost:11434',
   openaiModel: 'gpt-5.4-mini',
   remarkStyle: 'realistic',
@@ -390,6 +466,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsConsentGiven: false,
   ttsInstructions: DEFAULT_TTS_INSTRUCTIONS,
   voicePitch: 0,
+  offlineTtsSpeaker: 6, // am_michael — warm male, closest to the cloud voice
   musicUnderlay: true,
   expressiveCadence: true,
   // Fresh installs show the bundled official skin (seeded into userData/skins on
@@ -407,7 +484,114 @@ export const DEFAULT_SETTINGS: Settings = {
   consentGiven: false,
   cloudConsentGiven: false,
   windowPosition: null,
+  speechProvider: 'local',
+  whisperCliPath: 'whisper-cli',
+  whisperModelPath: '',
+  sttModel: 'gpt-4o-mini-transcribe',
+  notesCloudConsentGiven: false,
+  pushToTalkShortcut: 'CommandOrControl+Shift+Space',
+  ollamaChatModel: '',
+  ollamaEmbedModel: 'nomic-embed-text',
+  openaiEmbedModel: 'text-embedding-3-small',
+  weeklyReflectionNudge: true,
+  lastWeeklyNudgeISO: null,
+  webSearchEnabled: false,
+  webSearchConsentGiven: false,
 };
+
+// ── Notes + conversation (Stage 1: thinking companion) ───────────────────────
+// Notes are the FIRST user content Rocky ever persists. They are always
+// user-initiated (push-to-talk or typed in the chat window), stored locally in
+// userData/notes.json, and only ever leave the device when the user has both
+// selected the cloud provider AND given the separate notes-cloud consent.
+
+/** How a note was captured. */
+export type NoteSource = 'voice' | 'chat';
+
+/** A note as exposed to the renderer — never includes the embedding vector. */
+export interface NoteView {
+  id: string;
+  /** ISO timestamp of capture. */
+  createdAt: string;
+  text: string;
+  source: NoteSource;
+  /** 1-3 coarse topic tags, suggested by the model after save (best-effort). */
+  topics?: string[];
+}
+
+/** Longest note text we accept (clamped at save time). */
+export const NOTE_MAX_LENGTH = 4000;
+
+export type ChatRole = 'user' | 'rocky';
+
+/**
+ * One turn of the chat-window conversation. Persisted locally in
+ * userData/chat-history.json (owner-only, user-clearable) so a conversation
+ * survives closing the window; it never leaves the machine except as model
+ * context for the selected provider.
+ */
+export interface ChatMessage {
+  role: ChatRole;
+  text: string;
+}
+
+/** A web page Rocky searched or read while composing a reply. */
+export interface WebSource {
+  title: string;
+  url: string;
+}
+
+/** Result of a chat or reflection request. Errors are in-character lines. */
+export interface ChatResult {
+  ok: boolean;
+  reply?: string;
+  /** Notes whose text was shown to the model for this reply (for the UI). */
+  usedNotes?: NoteView[];
+  /** Web pages Rocky cited or read for this reply (for the sources row). */
+  sources?: WebSource[];
+  /** The model routed this turn into a detached research task on this topic
+   *  (start_research tool). When main returns it to a window, the task is
+   *  already running and `reply` is the in-persona ack. */
+  startResearch?: string;
+  error?: string;
+}
+
+/** The canned reflection actions in the chat window (Stage 1c). */
+export type ReflectionKind = 'summarize' | 'connections' | 'questions' | 'weekly';
+
+/** Result of transcribing captured audio. */
+export interface TranscriptionResult {
+  ok: boolean;
+  text?: string;
+  error?: string;
+}
+
+/** Result of saving a voice note (transcribe + store). */
+export interface VoiceNoteResult {
+  ok: boolean;
+  note?: NoteView;
+  error?: string;
+}
+
+/** Push-to-talk lifecycle, mirrored to windows so UI can reflect it. */
+export type VoiceCaptureState = 'idle' | 'recording' | 'processing';
+
+/** Readiness of the configured speech-to-text backend (for Settings). */
+export interface SpeechSetupStatus {
+  ok: boolean;
+  provider: ProviderKind;
+  error?: string;
+}
+
+/** macOS Microphone permission state (same vocabulary as screen recording). */
+export type MicPermissionStatus = ScreenPermissionStatus;
+
+/** Cloud STT models selectable in Settings. */
+export const STT_MODELS: readonly string[] = [
+  'gpt-4o-mini-transcribe',
+  'gpt-4o-transcribe',
+  'whisper-1',
+];
 
 /** Result of probing the local Ollama server. */
 export interface OllamaStatus {
@@ -441,3 +625,67 @@ export function clampInterval(minutes: number): number {
   if (!Number.isFinite(minutes)) return DEFAULT_SETTINGS.intervalMinutes;
   return Math.min(INTERVAL_MAX, Math.max(INTERVAL_MIN, Math.round(minutes)));
 }
+
+// ── Research tasks (Stage 2) ──────────────────────────────────────────────────
+// A background research run: Rocky plans sub-queries, searches, reads pages,
+// and synthesizes a report. One task at a time, cancellable, delivered into
+// the chat window as an ordinary Rocky message with sources.
+
+/** Result of a finished research task. Errors are in-character. */
+export interface ResearchResult {
+  ok: boolean;
+  /** The synthesized report (rendered, ready to display). */
+  report?: string;
+  /** A 2-3 sentence digest of the report, written to be spoken aloud. */
+  summary?: string;
+  sources?: WebSource[];
+  /** True when the run ended because the user cancelled it (no bubble then). */
+  cancelled?: boolean;
+  error?: string;
+}
+
+/** Acknowledgment that a research task was (or wasn't) kicked off. */
+export interface ResearchStart {
+  started: boolean;
+  /** In-character reason when not started (already running, no web consent…). */
+  error?: string;
+}
+
+// ── Decision journal (Stage 2) ────────────────────────────────────────────────
+// Decisions are first-class records Rocky follows up on later. Always captured
+// explicitly by the user (the model distills, the human confirms); stored
+// locally at userData/decisions.json, never leaves the machine except as
+// chat context for the selected provider.
+
+/** The model-distilled draft of a decision, confirmed by the user before saving. */
+export interface DecisionDraft {
+  decision: string;
+  reasons: string;
+  expectedOutcome: string;
+}
+
+export type DecisionStatus = 'open' | 'resolved';
+
+/** A saved decision. */
+export interface DecisionRecord extends DecisionDraft {
+  id: string;
+  /** ISO timestamp of capture. */
+  createdAt: string;
+  /** ISO timestamp after which Rocky may ask how it went. */
+  followUpAfter: string;
+  status: DecisionStatus;
+  /** One-line outcome, set when resolved. */
+  resolution?: string;
+}
+
+/** Result of distilling the conversation into a decision draft. */
+export interface DecisionDraftResult {
+  ok: boolean;
+  draft?: DecisionDraft;
+  error?: string;
+}
+
+/** Longest text accepted per decision field (clamped at save time). */
+export const DECISION_FIELD_MAX_LENGTH = 1000;
+/** Default follow-up horizon for a new decision. */
+export const DECISION_FOLLOW_UP_DAYS = 14;

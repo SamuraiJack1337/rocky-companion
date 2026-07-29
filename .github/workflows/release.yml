@@ -46,7 +46,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Fetch the bundled offline neural voice (sherpa-onnx) engine + voice model.
+      # Fetch the bundled offline neural voice (sherpa-onnx + Kokoro model).
       - run: node scripts/fetch-piper.mjs
       - run: npx electron-builder --mac --publish never
 
@@ -56,6 +56,11 @@ jobs:
           files: release/*.dmg
           fail_on_unmatched_files: true
           generate_release_notes: true
+          # A tag with a prerelease suffix (e.g. v0.4.0-beta.1) is published as a
+          # GitHub *pre-release*, so it is excluded from releases/latest and the
+          # in-app updater never auto-offers it to stable users. Plain vX.Y.Z
+          # tags stay full releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             ## Install — macOS
 
@@ -109,7 +114,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Fetch the bundled offline neural voice (Piper) engine + voice model.
+      # Fetch the bundled offline neural voice (sherpa-onnx + Kokoro model).
       - run: node scripts/fetch-piper.mjs
       - run: npx electron-builder --win --publish never
 
@@ -118,3 +123,6 @@ jobs:
         with:
           files: release/*.exe
           fail_on_unmatched_files: true
+          # Keep the prerelease flag consistent with the macOS job, since either
+          # job may be the one that first creates the release.
+          prerelease: ${{ contains(github.ref_name, '-') }}

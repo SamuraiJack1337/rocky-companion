@@ -13,13 +13,14 @@
 //   - On Save, build a Settings patch and persist it — but GUARD the switch to
 //     cloud so it requires both consent and a stored key.
 
-import type { Settings, ScreenPermissionStatus, SkinInfo } from '../shared/types';
+import type { MicPermissionStatus, Settings, ScreenPermissionStatus, SkinInfo } from '../shared/types';
 import {
   clampInterval,
   INTERVAL_MIN,
   INTERVAL_MAX,
   DEFAULT_SETTINGS,
   DEFAULT_TTS_INSTRUCTIONS,
+  OFFLINE_TTS_SPEAKERS,
   PROCEDURAL_SKIN,
 } from '../shared/types';
 import { SpokenVoice } from './spokenVoice';
@@ -33,6 +34,19 @@ const clampPitch = (n: number): number =>
 /** Audition players for the "Play test line" button (settings window only). */
 const auditioner = new SpokenVoice();
 const systemAuditioner = new SystemVoice();
+
+/** Reflect a speaker id into the offline-speaker select, tolerating ids
+ *  outside the curated list (e.g. hand-edited settings.json). */
+function selectOfflineSpeaker(id: number): void {
+  const known = OFFLINE_TTS_SPEAKERS.some((s) => s.id === id);
+  if (!known) {
+    const opt = document.createElement('option');
+    opt.value = String(id);
+    opt.textContent = `Custom (id ${id})`;
+    offlineSpeakerSelect.appendChild(opt);
+  }
+  offlineSpeakerSelect.value = String(id);
+}
 
 // ── Tiny typed DOM helpers ──────────────────────────────────────────────────
 
@@ -82,6 +96,7 @@ const intervalRange = el<HTMLInputElement>('interval-range');
 const intervalNumber = el<HTMLInputElement>('interval');
 const strictIntervalInput = el<HTMLInputElement>('strict-interval');
 const mutedInput = el<HTMLInputElement>('muted');
+const weeklyNudgeInput = el<HTMLInputElement>('weekly-nudge');
 const updateCheckInput = el<HTMLInputElement>('update-check');
 const clickThroughInput = el<HTMLInputElement>('click-through');
 const blockedAppsInput = el<HTMLTextAreaElement>('blocked-apps');
@@ -89,6 +104,16 @@ const blockedAppsStatus = el<HTMLDivElement>('blocked-apps-status');
 
 const voiceMode = el<HTMLSelectElement>('voice-mode');
 const ttsFields = el<HTMLDivElement>('tts-fields');
+const offlineFields = el<HTMLDivElement>('offline-fields');
+const offlineSpeakerSelect = el<HTMLSelectElement>('offline-speaker');
+const voiceSharedFields = el<HTMLDivElement>('voice-shared-fields');
+// The curated speaker list lives in shared/types so main + renderer agree.
+for (const speaker of OFFLINE_TTS_SPEAKERS) {
+  const opt = document.createElement('option');
+  opt.value = String(speaker.id);
+  opt.textContent = speaker.label;
+  offlineSpeakerSelect.appendChild(opt);
+}
 const ttsVoice = el<HTMLSelectElement>('tts-voice');
 const ttsModel = el<HTMLSelectElement>('tts-model');
 const ttsConsentInput = el<HTMLInputElement>('tts-consent');
@@ -105,8 +130,31 @@ const openSkinsFolderBtn = el<HTMLButtonElement>('open-skins-folder');
 const refreshSkinsBtn = el<HTMLButtonElement>('refresh-skins');
 const skinStatus = el<HTMLDivElement>('skin-status');
 
+const pttShortcutInput = el<HTMLInputElement>('ptt-shortcut');
+const sttLocal = el<HTMLInputElement>('stt-local');
+const sttCloud = el<HTMLInputElement>('stt-cloud');
+const sttLocalCard = el<HTMLLabelElement>('stt-local-card');
+const sttCloudCard = el<HTMLLabelElement>('stt-cloud-card');
+const sttLocalFields = el<HTMLDivElement>('stt-local-fields');
+const sttCloudFields = el<HTMLDivElement>('stt-cloud-fields');
+const whisperCliInput = el<HTMLInputElement>('whisper-cli');
+const whisperModelInput = el<HTMLInputElement>('whisper-model');
+const sttModelSelect = el<HTMLSelectElement>('stt-model');
+const notesCloudConsentInput = el<HTMLInputElement>('notes-cloud-consent');
+const webConsentInput = el<HTMLInputElement>('web-consent');
+const webEnabledInput = el<HTMLInputElement>('web-enabled');
+const ollamaChatModelInput = el<HTMLInputElement>('ollama-chat-model');
+const ollamaEmbedModelInput = el<HTMLInputElement>('ollama-embed-model');
+const openaiEmbedModelInput = el<HTMLInputElement>('openai-embed-model');
+const checkSpeechBtn = el<HTMLButtonElement>('check-speech');
+const speechStatus = el<HTMLDivElement>('speech-status');
+const micStatus = el<HTMLDivElement>('mic-status');
+const requestMicBtn = el<HTMLButtonElement>('request-mic');
+const recheckMicBtn = el<HTMLButtonElement>('recheck-mic');
+
 const screenStatus = el<HTMLDivElement>('screen-status');
 const openScreenBtn = el<HTMLButtonElement>('open-screen-settings');
+const fixScreenBtn = el<HTMLButtonElement>('fix-screen-permission');
 const recheckScreenBtn = el<HTMLButtonElement>('recheck-screen');
 const relaunchBtn = el<HTMLButtonElement>('relaunch-app');
 const screenHint = el<HTMLDivElement>('screen-hint');
@@ -136,6 +184,14 @@ function paintProviderCards(): void {
 function paintRemarkCards(): void {
   remarkRealisticCard.classList.toggle('selected', remarkRealistic.checked);
   remarkClassicCard.classList.toggle('selected', remarkClassic.checked);
+}
+
+/** Reflect the chosen speech backend into its cards and sub-field visibility. */
+function paintSttCards(): void {
+  sttLocalCard.classList.toggle('selected', sttLocal.checked);
+  sttCloudCard.classList.toggle('selected', sttCloud.checked);
+  sttLocalFields.classList.toggle('hidden', !sttLocal.checked);
+  sttCloudFields.classList.toggle('hidden', !sttCloud.checked);
 }
 
 // ── Cloud key status ─────────────────────────────────────────────────────────
@@ -192,6 +248,7 @@ function applySettings(s: Settings): void {
   strictIntervalInput.checked = s.strictInterval;
 
   mutedInput.checked = s.muted;
+  weeklyNudgeInput.checked = s.weeklyReflectionNudge;
   updateCheckInput.checked = s.updateCheckEnabled;
   clickThroughInput.checked = s.clickThrough;
   blockedAppsInput.value = s.blockedApps.join('\n');
@@ -207,9 +264,24 @@ function applySettings(s: Settings): void {
   voicePitchNumber.value = String(pitch);
   musicUnderlayInput.checked = s.musicUnderlay;
   expressiveCadenceInput.checked = s.expressiveCadence;
+  selectOfflineSpeaker(s.offlineTtsSpeaker);
   // Selecting only sticks if the option exists; populateSkins() runs on init.
   creatureSkinSelect.value = s.creatureSkin;
   paintVoiceFields();
+
+  pttShortcutInput.value = s.pushToTalkShortcut;
+  sttLocal.checked = s.speechProvider === 'local';
+  sttCloud.checked = s.speechProvider === 'cloud';
+  whisperCliInput.value = s.whisperCliPath;
+  whisperModelInput.value = s.whisperModelPath;
+  sttModelSelect.value = s.sttModel;
+  notesCloudConsentInput.checked = s.notesCloudConsentGiven;
+  webConsentInput.checked = s.webSearchConsentGiven;
+  webEnabledInput.checked = s.webSearchEnabled;
+  ollamaChatModelInput.value = s.ollamaChatModel;
+  ollamaEmbedModelInput.value = s.ollamaEmbedModel;
+  openaiEmbedModelInput.value = s.openaiEmbedModel;
+  paintSttCards();
 
   applyingSettings = false;
 }
@@ -241,15 +313,19 @@ function paintVoiceFields(): void {
   // The OpenAI-specific sub-fields (key consent, voice/model, delivery style)
   // only make sense for the cloud voice. The offline voice needs none of them.
   ttsFields.classList.toggle('hidden', mode !== 'openai');
+  // The bundled voice's speaker picker only applies offline; the shared
+  // controls (pitch, underlay, cadence, test) apply to both spoken modes.
+  offlineFields.classList.toggle('hidden', mode !== 'offline');
+  voiceSharedFields.classList.toggle('hidden', mode === 'procedural');
   // The delivery-style box only affects gpt-4o-* TTS; tts-1 / tts-1-hd ignore it.
   const styled = /gpt/i.test(ttsModel.value);
   ttsInstructions.disabled = !styled;
   ttsInstructions.style.opacity = styled ? '1' : '0.5';
 
   if (mode === 'offline') {
-    // No key or consent needed — spoken entirely on-device. Windows uses the
-    // bundled neural voice (Piper); other platforms use the OS speech engine.
-    // The test button reports which one actually spoke.
+    // No key or consent needed — spoken entirely on-device. macOS and Windows
+    // use the bundled neural voice (Kokoro via sherpa-onnx); other platforms
+    // use the OS speech engine. The test button reports which one spoke.
     testVoiceBtn.disabled = false;
     setStatus(
       voiceStatus,
@@ -296,15 +372,97 @@ function paintBlockedAppsStatus(): void {
   );
 }
 
+// ── Microphone permission + speech setup ────────────────────────────────────
+
+function paintMicPermission(status: MicPermissionStatus): void {
+  if (status === 'granted') {
+    setStatus(micStatus, 'Granted — push-to-talk can hear you.', 'ok');
+    requestMicBtn.classList.add('hidden');
+    return;
+  }
+  const label: Record<Exclude<MicPermissionStatus, 'granted'>, string> = {
+    denied: 'Denied — enable Rocky under System Settings → Privacy & Security → Microphone.',
+    restricted: 'Restricted by system policy.',
+    'not-determined': 'Not yet requested — macOS will ask on first use.',
+    unknown: 'Permission state unknown.',
+  };
+  setStatus(micStatus, label[status], status === 'denied' ? 'err' : 'warn');
+  requestMicBtn.classList.remove('hidden');
+}
+
+async function refreshMicPermission(): Promise<void> {
+  setStatus(micStatus, 'Checking…', 'muted');
+  try {
+    paintMicPermission(await window.rocky.checkMicPermission());
+  } catch {
+    paintMicPermission('unknown');
+  }
+}
+
+requestMicBtn.addEventListener('click', async () => {
+  requestMicBtn.disabled = true;
+  try {
+    paintMicPermission(await window.rocky.requestMicPermission());
+  } finally {
+    requestMicBtn.disabled = false;
+  }
+});
+recheckMicBtn.addEventListener('click', () => void refreshMicPermission());
+
+// Probe whichever STT backend the SAVED settings select (probe follows Save).
+checkSpeechBtn.addEventListener('click', async () => {
+  checkSpeechBtn.disabled = true;
+  setStatus(speechStatus, 'Checking speech setup…', 'muted');
+  try {
+    const result = await window.rocky.checkSpeechSetup();
+    if (result.ok) {
+      setStatus(
+        speechStatus,
+        result.provider === 'local'
+          ? 'Local whisper.cpp is ready. Good.'
+          : 'Cloud transcription is ready. Good.',
+        'ok',
+      );
+    } else {
+      setStatus(speechStatus, result.error ?? 'Speech setup is not ready.', 'err');
+    }
+  } catch {
+    setStatus(speechStatus, 'Check failed.', 'err');
+  } finally {
+    checkSpeechBtn.disabled = false;
+  }
+});
+
+sttLocal.addEventListener('change', paintSttCards);
+sttCloud.addEventListener('change', paintSttCards);
+
 // ── Screen Recording permission ──────────────────────────────────────────────
 
-function paintScreenPermission(status: ScreenPermissionStatus): void {
-  const granted = status === 'granted';
-  if (granted) {
+function paintScreenPermission(status: ScreenPermissionStatus, blank: boolean): void {
+  // The fix flow (tccutil reset) exists only on macOS.
+  const canFix = window.rocky.platform === 'darwin';
+
+  if (status === 'granted' && !blank) {
     setStatus(screenStatus, 'Granted — Rocky can see your screen.', 'ok');
     openScreenBtn.classList.add('hidden');
+    fixScreenBtn.classList.add('hidden');
     relaunchBtn.classList.add('hidden');
     screenHint.classList.add('hidden');
+    return;
+  }
+
+  if (status === 'granted') {
+    // Granted, yet the test capture came back black: the signature of a TCC
+    // grant left behind by an older copy of the app (unsigned-build updates).
+    setStatus(
+      screenStatus,
+      'Granted, but captures come back black — the grant likely belongs to an older copy of Rocky.',
+      'warn',
+    );
+    openScreenBtn.classList.add('hidden');
+    fixScreenBtn.classList.toggle('hidden', !canFix);
+    relaunchBtn.classList.remove('hidden');
+    screenHint.classList.remove('hidden');
     return;
   }
 
@@ -316,6 +474,9 @@ function paintScreenPermission(status: ScreenPermissionStatus): void {
   };
   setStatus(screenStatus, label[status], status === 'denied' ? 'err' : 'warn');
   openScreenBtn.classList.remove('hidden');
+  // Denied while the System Settings toggle looks ON is the same stale-grant
+  // trap — the fix flow cures that too.
+  fixScreenBtn.classList.toggle('hidden', !canFix);
   relaunchBtn.classList.remove('hidden');
   screenHint.classList.remove('hidden');
 }
@@ -323,10 +484,10 @@ function paintScreenPermission(status: ScreenPermissionStatus): void {
 async function refreshScreenPermission(): Promise<void> {
   setStatus(screenStatus, 'Checking…', 'muted');
   try {
-    const status = await window.rocky.checkScreenPermission();
-    paintScreenPermission(status);
+    const diag = await window.rocky.diagnoseScreenCapture();
+    paintScreenPermission(diag.status, diag.blank);
   } catch {
-    paintScreenPermission('unknown');
+    paintScreenPermission('unknown', true);
   }
 }
 
@@ -362,6 +523,14 @@ voiceMode.addEventListener('change', paintVoiceFields);
 ttsModel.addEventListener('change', paintVoiceFields);
 ttsConsentInput.addEventListener('change', paintVoiceFields);
 
+// Web search can't be on without the egress consent; enabling it implies consent.
+webConsentInput.addEventListener('change', () => {
+  if (!webConsentInput.checked) webEnabledInput.checked = false;
+});
+webEnabledInput.addEventListener('change', () => {
+  if (webEnabledInput.checked) webConsentInput.checked = true;
+});
+
 // Keep the pitch slider and number box in lockstep, clamped to range.
 function syncPitchFrom(source: HTMLInputElement): void {
   const v = clampPitch(Number(source.value));
@@ -375,7 +544,7 @@ voicePitchNumber.addEventListener('change', () => syncPitchFrom(voicePitchNumber
 testVoiceBtn.addEventListener('click', async () => {
   const sampleLine = 'Buddy. You are here. I see you. We work, question?';
 
-  // Offline mode: prefer the bundled neural voice (Piper, via main); fall back
+  // Offline mode: prefer the bundled neural voice (Kokoro, via main); fall back
   // to the OS speech engine. No key, no network either way.
   if (voiceMode.value === 'offline') {
     testVoiceBtn.disabled = true;
@@ -517,6 +686,37 @@ openScreenBtn.addEventListener('click', () => {
 });
 recheckScreenBtn.addEventListener('click', () => void refreshScreenPermission());
 relaunchBtn.addEventListener('click', () => void window.rocky.relaunchApp());
+fixScreenBtn.addEventListener('click', () => {
+  void (async () => {
+    fixScreenBtn.disabled = true;
+    setStatus(screenStatus, 'Resetting the Screen Recording grant…', 'muted');
+    try {
+      const result = await window.rocky.resetScreenPermission();
+      if (result.ok) {
+        setStatus(
+          screenStatus,
+          'Permission reset. Flip the toggle ON for Rocky in System Settings, then Relaunch Rocky.',
+          'warn',
+        );
+        relaunchBtn.classList.remove('hidden');
+      } else {
+        // MDM-managed machines can hold system-level rows the reset can't
+        // touch — fall back to the manual Terminal instructions in the hint.
+        setStatus(
+          screenStatus,
+          `Automatic reset failed${result.error ? ` (${result.error})` : ''} — see the manual steps below.`,
+          'err',
+        );
+        screenHint.classList.remove('hidden');
+      }
+    } catch {
+      setStatus(screenStatus, 'Automatic reset failed — see the manual steps below.', 'err');
+      screenHint.classList.remove('hidden');
+    } finally {
+      fixScreenBtn.disabled = false;
+    }
+  })();
+});
 
 // Creature skin: open the folder to drop art in, and re-scan for new skins.
 openSkinsFolderBtn.addEventListener('click', () => {
@@ -561,6 +761,19 @@ saveBtn.addEventListener('click', async () => {
     }
   }
 
+  // GUARD: cloud speech-to-text sends note audio to OpenAI — it requires the
+  // separate notes-cloud consent AND a stored key (mirrors the vision guard).
+  if (sttCloud.checked) {
+    if (!notesCloudConsentInput.checked) {
+      setStatus(saveStatus, 'To use cloud speech-to-text, tick the notes-cloud consent first.', 'err');
+      return;
+    }
+    if (!keyStored) {
+      setStatus(saveStatus, 'To use cloud speech-to-text, save a valid OpenAI key first.', 'err');
+      return;
+    }
+  }
+
   // Build the patch from the current form. Interval is clamped defensively.
   const patch: Partial<Settings> = {
     provider: wantsCloud ? 'cloud' : 'local',
@@ -573,6 +786,7 @@ saveBtn.addEventListener('click', async () => {
     intervalMinutes: clampInterval(Number(intervalNumber.value)),
     strictInterval: strictIntervalInput.checked,
     muted: mutedInput.checked,
+    weeklyReflectionNudge: weeklyNudgeInput.checked,
     updateCheckEnabled: updateCheckInput.checked,
     clickThrough: clickThroughInput.checked,
     blockedApps: readBlockedApps(),
@@ -583,9 +797,24 @@ saveBtn.addEventListener('click', async () => {
     ttsConsentGiven: ttsConsentInput.checked,
     ttsInstructions: ttsInstructions.value.trim() || DEFAULT_TTS_INSTRUCTIONS,
     voicePitch: clampPitch(Number(voicePitchNumber.value)),
+    offlineTtsSpeaker: Number.isInteger(Number(offlineSpeakerSelect.value))
+      ? Number(offlineSpeakerSelect.value)
+      : DEFAULT_SETTINGS.offlineTtsSpeaker,
     musicUnderlay: musicUnderlayInput.checked,
     expressiveCadence: expressiveCadenceInput.checked,
     creatureSkin: creatureSkinSelect.value || PROCEDURAL_SKIN,
+    pushToTalkShortcut: pttShortcutInput.value.trim() || DEFAULT_SETTINGS.pushToTalkShortcut,
+    speechProvider: sttCloud.checked ? 'cloud' : 'local',
+    whisperCliPath: whisperCliInput.value.trim() || DEFAULT_SETTINGS.whisperCliPath,
+    whisperModelPath: whisperModelInput.value.trim(),
+    sttModel: sttModelSelect.value,
+    notesCloudConsentGiven: notesCloudConsentInput.checked,
+    // Web egress requires consent; main coerces enabled→false without it.
+    webSearchConsentGiven: webConsentInput.checked,
+    webSearchEnabled: webEnabledInput.checked && webConsentInput.checked,
+    ollamaChatModel: ollamaChatModelInput.value.trim(),
+    ollamaEmbedModel: ollamaEmbedModelInput.value.trim() || DEFAULT_SETTINGS.ollamaEmbedModel,
+    openaiEmbedModel: openaiEmbedModelInput.value.trim() || DEFAULT_SETTINGS.openaiEmbedModel,
   };
 
   saveBtn.disabled = true;
@@ -605,7 +834,20 @@ saveBtn.addEventListener('click', async () => {
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 
+/** Un-hide the whisper hint matching the host OS and set native placeholders. */
+function applyPlatformHints(): void {
+  const platform = window.rocky.platform;
+  const variant = platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : 'other';
+  document.getElementById(`whisper-cli-hint-${variant}`)?.removeAttribute('hidden');
+  if (platform === 'win32') {
+    whisperCliInput.placeholder = 'C:\\whisper\\whisper-cli.exe';
+    whisperModelInput.placeholder = 'C:\\whisper\\ggml-base.en.bin';
+  }
+}
+
 async function init(): Promise<void> {
+  applyPlatformHints();
+
   // Fill the skin dropdown first so applySettings can select the saved skin.
   await populateSkins();
 
@@ -625,7 +867,7 @@ async function init(): Promise<void> {
   });
 
   // Independent async probes.
-  await Promise.all([refreshKeyStored(), refreshScreenPermission()]);
+  await Promise.all([refreshKeyStored(), refreshScreenPermission(), refreshMicPermission()]);
 
   // Reflect the clamp range into the inputs (belt-and-suspenders vs. HTML attrs).
   intervalRange.min = String(INTERVAL_MIN);
