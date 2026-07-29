@@ -8,8 +8,11 @@ import { CH, EV } from '../shared/ipc';
 import type {
   RockyAPI,
   ChatActionCommand,
+  ChatProgress,
+  ChatTurn,
   ConsentPayload,
   PttCommand,
+  ResearchDone,
   TtsOverrides,
   TtsSegment,
   UpdatePrompt,
@@ -31,9 +34,13 @@ import type {
   FocusState,
   ChatMessage,
   ChatResult,
+  DecisionDraft,
+  DecisionDraftResult,
+  DecisionRecord,
   MicPermissionStatus,
   NoteView,
   ReflectionKind,
+  ResearchStart,
   SpeechSetupStatus,
   TranscriptionResult,
   VoiceCaptureState,
@@ -133,6 +140,22 @@ const api: RockyAPI = {
   openChat: (reflect?: ReflectionKind) =>
     ipcRenderer.invoke(CH.OPEN_CHAT, reflect) as Promise<void>,
 
+  // chat history, research, decisions, external links (Stage 2)
+  getChatHistory: () => ipcRenderer.invoke(CH.CHAT_HISTORY_GET) as Promise<ChatMessage[]>,
+  clearChatHistory: () => ipcRenderer.invoke(CH.CHAT_HISTORY_CLEAR) as Promise<void>,
+  startResearch: (topic: string) =>
+    ipcRenderer.invoke(CH.RESEARCH_START, topic) as Promise<ResearchStart>,
+  cancelResearch: () => ipcRenderer.invoke(CH.RESEARCH_CANCEL) as Promise<void>,
+  distillDecision: (messages: ChatMessage[]) =>
+    ipcRenderer.invoke(CH.DECISION_DISTILL, messages) as Promise<DecisionDraftResult>,
+  logDecision: (draft: DecisionDraft) =>
+    ipcRenderer.invoke(CH.DECISION_LOG, draft) as Promise<DecisionRecord | null>,
+  listDecisions: () => ipcRenderer.invoke(CH.DECISION_LIST) as Promise<DecisionRecord[]>,
+  resolveDecision: (id: string, resolution: string) =>
+    ipcRenderer.invoke(CH.DECISION_RESOLVE, { id, resolution }) as Promise<void>,
+  deleteDecision: (id: string) => ipcRenderer.invoke(CH.DECISION_DELETE, id) as Promise<void>,
+  openExternal: (url: string) => ipcRenderer.invoke(CH.OPEN_EXTERNAL, url) as Promise<void>,
+
   // push events (main → renderer)
   onPtt: (cb: (cmd: PttCommand) => void) => subscribe<PttCommand>(EV.PTT, cb),
   onVoiceState: (cb: (state: VoiceCaptureState) => void) =>
@@ -140,6 +163,11 @@ const api: RockyAPI = {
   onNoteSaved: (cb: (note: NoteView) => void) => subscribe<NoteView>(EV.NOTE_SAVED, cb),
   onChatAction: (cb: (cmd: ChatActionCommand) => void) =>
     subscribe<ChatActionCommand>(EV.CHAT_ACTION, cb),
+  onChatTurn: (cb: (turn: ChatTurn) => void) => subscribe<ChatTurn>(EV.CHAT_TURN, cb),
+  onChatProgress: (cb: (progress: ChatProgress) => void) =>
+    subscribe<ChatProgress>(EV.CHAT_PROGRESS, cb),
+  onResearchDone: (cb: (done: ResearchDone) => void) =>
+    subscribe<ResearchDone>(EV.RESEARCH_DONE, cb),
   onReply: (cb: (reply: RockyReply) => void) => subscribe<RockyReply>(EV.REPLY, cb),
   onCaptureIndicator: (cb: () => void) => {
     const listener = () => cb();

@@ -1,12 +1,16 @@
-// Push-to-talk voice notes (Stage 1a). One global shortcut toggles a tiny
-// state machine: idle → recording → processing → idle. The actual microphone
-// capture happens in the companion renderer (getUserMedia); this controller
-// only orchestrates — it never touches audio devices itself.
+// Push-to-talk voice input (Stage 1a; intent routing in Stage 2). One global
+// shortcut toggles a tiny state machine: idle → recording → processing → idle.
+// The actual microphone capture happens in the companion renderer
+// (getUserMedia); this controller only orchestrates — it never touches audio
+// devices itself.
 //
 // Flow: toggle → mic permission check → EV.PTT start → renderer records →
 // toggle again → EV.PTT stop → renderer submits an in-memory WAV → the
-// configured SpeechProvider transcribes → the notebook stores the text →
-// Rocky confirms out loud with a snippet (so mishearings are visible).
+// configured SpeechProvider transcribes → the utterance is CLASSIFIED
+// (shared/voiceIntent.ts) and routed: a research command launches the detached
+// research task, an address/question becomes a chat turn answered through the
+// companion bubble, and everything else stays a saved note with a spoken
+// confirmation snippet (so mishearings are visible).
 //
 // Audio is in-memory end to end, except the local whisper-cli path, which
 // writes a transient owner-only temp file (see WhisperCliProvider).
@@ -20,11 +24,14 @@ import type {
   VoiceCaptureState,
   VoiceNoteResult,
 } from '../shared/types';
-import type { PttCommand } from '../shared/ipc';
+import type { ChatTurn, PttCommand } from '../shared/ipc';
 import { createSpeechProvider } from './providers/SpeechProvider';
 import { notes } from './notes';
 import { embedTexts } from './embeddings';
-import { suggestTopics } from './chat';
+import { chatWithRocky, suggestTopics, webAllowed } from './chat';
+import { chatHistory } from './chatHistory';
+import { startDetachedResearch } from './researchTask';
+import { classifyUtterance } from '../shared/voiceIntent';
 import { getMicPermission, requestMicPermission } from './permissions';
 import {
   listeningReply,
@@ -32,6 +39,8 @@ import {
   noteEmptyReply,
   noteSavedReply,
   noteSnippet,
+  researchAckReply,
+  voiceAnswerReply,
   voiceTroubleReply,
 } from '../shared/persona';
 import { renderLine } from '../shared/lines';
@@ -40,6 +49,12 @@ import { renderLine } from '../shared/lines';
 const MAX_RECORDING_MS = 120_000;
 /** If the renderer never delivers audio after a stop, give up and reset. */
 const SUBMIT_TIMEOUT_MS = 30_000;
+/** Longest bubble line for a spoken chat answer; the full reply is in the transcript. */
+const VOICE_BUBBLE_MAX_LENGTH = 350;
+
+const WEB_OFF_FOR_RESEARCH =
+  'Rocky needs web access on for research, {name}. Turn it on in Settings.';
+const CHAT_LOST = 'Rocky lost the thread of that, {name}. Try again, question?';
 
 export interface VoiceNotesDeps {
   getSettings: () => Settings;
@@ -51,6 +66,8 @@ export interface VoiceNotesDeps {
   broadcastState: (state: VoiceCaptureState) => void;
   /** A note was saved — notebook views refresh on this. */
   broadcastNoteSaved: (note: NoteView) => void;
+  /** A spoken chat turn landed in the transcript — open chat windows append it. */
+  broadcastChatTurn: (turn: ChatTurn) => void;
   /** Rocky must be visible while he listens. */
   showCompanion: () => void;
 }
@@ -128,7 +145,9 @@ export class VoiceNotesController {
     }
   }
 
-  /** The captured WAV arrives from the renderer: transcribe, store, confirm. */
+  /** The captured WAV arrives from the renderer: transcribe, classify, route.
+   *  Research commands and chat turns never touch the notebook; plain
+   *  statements are stored and confirmed exactly as before. */
   async submit(wavBase64: string): Promise<VoiceNoteResult> {
     this.clearTimers();
     const settings = this.deps.getSettings();
@@ -142,7 +161,19 @@ export class VoiceNotesController {
         this.deps.emitReply(voiceTroubleReply(error, name));
         return { ok: false, error };
       }
-      const note = notes.add(transcription.text ?? '', 'voice');
+      const text = (transcription.text ?? '').trim();
+      const intent = classifyUtterance(text);
+      if (intent.kind === 'research') {
+        this.routeResearch(intent.topic, settings);
+        return { ok: true };
+      }
+      if (intent.kind === 'chat') {
+        // Detached on purpose: a web-assisted answer can take a while, and the
+        // push-to-talk state machine must re-arm for the next press meanwhile.
+        void this.routeChat(text, settings);
+        return { ok: true };
+      }
+      const note = notes.add(text, 'voice');
       if (!note) {
         this.deps.emitReply(noteEmptyReply(name));
         return { ok: false, error: 'Nothing to keep.' };
@@ -154,6 +185,53 @@ export class VoiceNotesController {
     } finally {
       this.resetToIdle();
     }
+  }
+
+  /** Spoken research command: acknowledge in persona and run detached — the
+   *  completion bubble + transcript entry come from the research runner. */
+  private routeResearch(topic: string, settings: Settings): void {
+    const name = settings.callName;
+    if (!webAllowed(settings)) {
+      this.deps.emitReply(voiceTroubleReply(WEB_OFF_FOR_RESEARCH, name));
+      return;
+    }
+    const start = startDetachedResearch(topic, this.deps.emitReply);
+    this.deps.emitReply(
+      start.started
+        ? researchAckReply(name)
+        : voiceTroubleReply(start.error ?? CHAT_LOST, name),
+    );
+  }
+
+  /**
+   * Spoken conversational turn: continuous with the Notes-window conversation
+   * (persisted history + this utterance), answered through the companion
+   * bubble, persisted, and mirrored live to any open chat window. The model
+   * may still route the turn into research via the start_research tool.
+   */
+  private async routeChat(text: string, settings: Settings): Promise<void> {
+    const name = settings.callName;
+    const history = [...chatHistory.list(), { role: 'user' as const, text }];
+    const result = await chatWithRocky(history, settings);
+    if (result.ok && result.startResearch) {
+      const start = startDetachedResearch(result.startResearch, this.deps.emitReply);
+      if (!start.started) {
+        this.deps.emitReply(voiceTroubleReply(start.error ?? CHAT_LOST, name));
+        return;
+      }
+      const ack = researchAckReply(name);
+      chatHistory.appendTurn({ role: 'user', text }, { role: 'rocky', text: ack.line });
+      this.deps.broadcastChatTurn({ user: text, rocky: ack.line });
+      this.deps.emitReply(ack);
+      return;
+    }
+    if (!result.ok || !result.reply) {
+      this.deps.emitReply(voiceTroubleReply(result.error ?? CHAT_LOST, name));
+      return;
+    }
+    chatHistory.appendTurn({ role: 'user', text }, { role: 'rocky', text: result.reply });
+    this.deps.broadcastChatTurn({ user: text, rocky: result.reply, sources: result.sources });
+    this.deps.emitReply(voiceAnswerReply(noteSnippet(result.reply, VOICE_BUBBLE_MAX_LENGTH)));
   }
 
   /** Transcribe without saving (the chat window's mic button). Error lines

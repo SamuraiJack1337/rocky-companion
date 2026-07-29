@@ -677,7 +677,8 @@
         <input type="text" id="ptt-shortcut" spellcheck="false" autocomplete="off" placeholder="CommandOrControl+Shift+Space" />
         <div class="hint">
           Electron accelerator format, e.g. <code>CommandOrControl+Shift+Space</code> or
-          <code>Alt+Shift+R</code>. Press once to start listening, again to stop and save.
+          <code>Alt+Shift+R</code>. Press once to start listening, again to stop — Rocky
+          keeps a note, answers a question, or starts research, depending on what you say.
         </div>
       </div>
 
@@ -767,6 +768,34 @@
         <div class="inline" style="margin-top: 8px">
           <button id="request-mic" class="hidden">Enable microphone</button>
           <button id="recheck-mic">Re-check</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Web access ─────────────────────────────────────────────────────── -->
+    <section class="section">
+      <h2>Web access</h2>
+      <div class="disclosure">
+        Let Rocky search the web and read pages during chat and research. When he does,
+        <strong>your search text and the addresses of pages he reads leave this machine</strong>
+        — to the search service (DuckDuckGo) and those sites — <strong>even in local mode</strong>.
+        Search is off by default and needs the consent below.
+      </div>
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="web-consent" />
+          <span>I agree to let Rocky's searches and page reads leave this machine</span>
+        </label>
+      </div>
+      <div class="field">
+        <label class="row">
+          <input type="checkbox" id="web-enabled" />
+          <span>Enable web search and research</span>
+        </label>
+        <div class="hint">
+          Cloud provider: OpenAI's built-in web search. Local (Ollama): DuckDuckGo, via a
+          tool-using model such as <code>qwen2.5</code>. Turn this off any time to keep Rocky
+          notebook-only.
         </div>
       </div>
     </section>

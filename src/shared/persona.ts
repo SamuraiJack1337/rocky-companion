@@ -382,11 +382,12 @@ export function farewellReply(name?: string): RockyReply {
 
 // ── Voice notes (Stage 1: push-to-talk thoughts) ─────────────────────────────
 
-/** Push-to-talk began: Rocky raises his receivers and waits. */
+/** Push-to-talk began: Rocky raises his receivers and waits. Neutral on
+ *  purpose — what follows may become a note, an answer, or a research task. */
 export function listeningReply(name?: string): RockyReply {
   return {
     ...ritual(
-      renderLine('Rocky listens, {name}. Speak the thought. Press again when done.', { name }),
+      renderLine('Rocky listens, {name}. Speak — press again when done.', { name }),
       'curious',
       'listen',
       'question',
@@ -427,6 +428,23 @@ export function noteEmptyReply(name?: string): RockyReply {
 /** A transcription/setup failure line (already a {name} template) as a reply. */
 export function voiceTroubleReply(errorLine: string, name?: string): RockyReply {
   return ritual(renderLine(errorLine, { name }), 'concerned', 'protect', 'concern');
+}
+
+/** A spoken/chat turn was routed into a background research task: acknowledge
+ *  now; the completion bubble announces the result later (the JARVIS loop). */
+export function researchAckReply(name?: string): RockyReply {
+  return ritual(
+    renderLine('On it, {name}. Rocky will call out when the research is done.', { name }),
+    'excited',
+    'build',
+    'complete',
+  );
+}
+
+/** A spoken question answered through the companion bubble (already rendered
+ *  and clamped by the caller; the full reply lives in the chat transcript). */
+export function voiceAnswerReply(line: string): RockyReply {
+  return ritual(line, 'calm', 'observe', 'agreement');
 }
 
 /** Friday-afternoon offer to reflect on the week's notes (bubble has buttons). */

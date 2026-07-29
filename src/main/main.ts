@@ -40,6 +40,8 @@ import { registerIpc } from './ipc';
 import { seedBundledSkins } from './assets';
 import { VoiceNotesController } from './voiceNotes';
 import { notes } from './notes';
+import { decisions } from './decisions';
+import { noteSnippet } from '../shared/persona';
 import { NUDGE_MIN_NOTES, shouldOfferWeeklyNudge } from './weeklyNudge';
 import { FocusManager } from './focus';
 import { getFrontmostAppName } from './activeApp';
@@ -138,8 +140,8 @@ function rebuildProvider(): void {
   provider = createProvider(store.get());
 }
 
-// Push-to-talk voice notes (Stage 1a). The controller orchestrates; the
-// companion renderer does the actual microphone capture.
+// Push-to-talk voice input (Stage 1a; intent routing in Stage 2). The
+// controller orchestrates; the companion renderer does the actual capture.
 const voiceNotes = new VoiceNotesController({
   getSettings: () => store.get(),
   emitReply,
@@ -149,6 +151,7 @@ const voiceNotes = new VoiceNotesController({
     refreshTray();
   },
   broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
+  broadcastChatTurn: (turn) => broadcast(EV.CHAT_TURN, turn),
   showCompanion: () => showCompanionWindow(),
 });
 
@@ -172,6 +175,32 @@ function maybeOfferWeeklyReflection(): void {
   store.set({ lastWeeklyNudgeISO: now.toISOString() });
   showCompanionWindow();
   emitReply(weeklyReflectionOfferReply(s.callName));
+}
+
+/**
+ * Decision follow-up: once a logged decision's follow-up horizon has passed,
+ * Rocky asks — once — how it held up, and clicking through seeds the chat with
+ * that question. Purely local, throttled to at most one nudge per hour so it
+ * never nags. Marking the decision "resolved" in the notebook stops it.
+ */
+let lastDecisionFollowUpAt = 0;
+function maybeFollowUpDecision(): void {
+  const s = store.get();
+  if (!s.consentGiven || s.paused) return;
+  if (Date.now() - lastDecisionFollowUpAt < 60 * 60_000) return;
+  const due = decisions.dueForFollowUp();
+  if (!due) return;
+  lastDecisionFollowUpAt = Date.now();
+  // Push this decision's horizon out a week so it can't nag day after day; the
+  // user resolves it in the notebook when they're ready.
+  decisions.snoozeFollowUp(due.id, 7);
+  const day = due.createdAt.slice(0, 10);
+  const line = renderLine(
+    `On ${day} you decided: "${noteSnippet(due.decision, 80)}". Did it hold, {name}?`,
+    { name: s.callName },
+  );
+  showCompanionWindow();
+  emitReply({ line, mood: 'curious', activity: 'idle', gesture: 'observe', motif: 'question' });
 }
 
 /**
@@ -360,10 +389,10 @@ function buildTrayMenu(): Menu {
     {
       label:
         voiceNotes.getState() === 'recording'
-          ? 'Stop listening (saves the note)'
+          ? 'Stop listening'
           : voiceNotes.getState() === 'processing'
             ? 'Translating your thought…'
-            : 'Talk to Rocky (voice note)',
+            : 'Talk to Rocky',
       enabled: voiceNotes.getState() !== 'processing',
       click: () => void voiceNotes.toggle(),
     },
@@ -471,6 +500,13 @@ if (!gotLock) {
     nudgeDelay.unref();
     const nudgeTimer = setInterval(() => maybeOfferWeeklyReflection(), 30 * 60_000);
     nudgeTimer.unref();
+
+    // Decision follow-ups: same cheap, local, throttled pattern as the weekly
+    // nudge. First check a minute in, then every half hour.
+    const followUpDelay = setTimeout(() => maybeFollowUpDecision(), 60_000);
+    followUpDelay.unref();
+    const followUpTimer = setInterval(() => maybeFollowUpDecision(), 30 * 60_000);
+    followUpTimer.unref();
 
     const s = store.get();
     if (!s.consentGiven) {

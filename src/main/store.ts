@@ -162,6 +162,12 @@ class SettingsStore {
     if (merged.speechProvider === 'cloud' && !merged.notesCloudConsentGiven) {
       merged.speechProvider = 'local';
     }
+    // Web access invariant: search text and page addresses may only leave the
+    // device with the explicit web consent — in BOTH provider modes. Same
+    // defense-in-depth as above; chat.ts re-checks before attaching tools.
+    if (merged.webSearchEnabled && !merged.webSearchConsentGiven) {
+      merged.webSearchEnabled = false;
+    }
     merged.pushToTalkShortcut = normalizeShortField(
       merged.pushToTalkShortcut,
       DEFAULT_SETTINGS.pushToTalkShortcut,

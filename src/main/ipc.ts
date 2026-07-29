@@ -5,11 +5,12 @@
 // Secrets never cross into the renderer: the OpenAI key is validated and stored
 // here and never returned to any window.
 
-import { app, ipcMain, BrowserWindow } from 'electron';
+import { app, ipcMain, BrowserWindow, shell } from 'electron';
 import { CH, EV } from '../shared/ipc';
 import type { ConsentPayload } from '../shared/ipc';
 import type {
   ChatMessage,
+  DecisionDraft,
   EngineeringRequest,
   NoteView,
   ReflectionKind,
@@ -31,19 +32,30 @@ import { createSpeechProvider } from './providers/SpeechProvider';
 import { synthesizeSpeech } from './tts';
 import { synthesizeOffline } from './offlineTts';
 import { listSkins, loadSkin, openSkinsFolder } from './assets';
-import { sendToChat, showChatWindow, showLabWindow, showSettingsWindow } from './windows';
+import {
+  sendToChat,
+  showChatWindow,
+  showLabWindow,
+  showSettingsWindow,
+} from './windows';
+import { renderLine } from '../shared/lines';
 import type { TtsOverrides } from '../shared/ipc';
 import type { Scheduler } from './scheduler';
 import type { FocusManager } from './focus';
 import { memory } from './memory';
 import { notes } from './notes';
 import { solveEngineering } from './engineering';
-import { chatWithRocky, reflectOnNotes } from './chat';
+import { chatWithRocky, distillDecision, reflectOnNotes } from './chat';
+import { chatHistory } from './chatHistory';
+import { decisions } from './decisions';
+import { research } from './research';
+import { startDetachedResearch } from './researchTask';
 import type { VoiceNotesController } from './voiceNotes';
 import {
   calculationReply,
   focusCancelledReply,
   focusStartedReply,
+  researchAckReply,
 } from '../shared/persona';
 
 export interface IpcDeps {
@@ -228,9 +240,34 @@ export function registerIpc(deps: IpcDeps): void {
     if (typeof id === 'string') notes.delete(id);
   });
   ipcMain.handle(CH.NOTES_CLEAR, () => notes.clear());
-  ipcMain.handle(CH.CHAT_SEND, (_e, messages: ChatMessage[]) =>
-    chatWithRocky(Array.isArray(messages) ? messages : [], store.get()),
-  );
+  ipcMain.handle(CH.CHAT_SEND, async (e, messages: ChatMessage[]) => {
+    const history = Array.isArray(messages) ? messages : [];
+    // Progress lines target only the asking window (not a broadcast).
+    const onProgress = (line: string) => {
+      if (!e.sender.isDestroyed()) e.sender.send(EV.CHAT_PROGRESS, { line });
+    };
+    let result = await chatWithRocky(history, store.get(), onProgress);
+    // The model routed this turn into a research task (start_research tool):
+    // kick off the detached run and answer with the in-persona ack instead.
+    if (result.ok && result.startResearch) {
+      const start = startDetachedResearch(result.startResearch, deps.emitReply, onProgress);
+      const name = store.get().callName;
+      result = start.started
+        ? { ...result, reply: researchAckReply(name).line }
+        : {
+            ...result,
+            startResearch: undefined,
+            reply: start.error ?? renderLine('Rocky could not start that research, {name}.', { name }),
+          };
+    }
+    // Persist the turn on success so the transcript survives window close.
+    if (result.ok && result.reply) {
+      const latestUser = [...history].reverse().find((m) => m && m.role === 'user');
+      if (latestUser) chatHistory.append({ role: 'user', text: latestUser.text });
+      chatHistory.append({ role: 'rocky', text: result.reply });
+    }
+    return result;
+  });
   ipcMain.handle(CH.CHAT_REFLECT, (_e, kind: ReflectionKind) =>
     reflectOnNotes(kind, store.get()),
   );
@@ -243,6 +280,60 @@ export function registerIpc(deps: IpcDeps): void {
       reflect === 'weekly'
     ) {
       sendToChat(EV.CHAT_ACTION, { reflect });
+    }
+  });
+
+  // ── chat history, research, decisions, external links (Stage 2) ────────────
+  ipcMain.handle(CH.CHAT_HISTORY_GET, () => chatHistory.list());
+  ipcMain.handle(CH.CHAT_HISTORY_CLEAR, () => chatHistory.clear());
+
+  // Research is fire-and-forget: the handler resolves as soon as the task is
+  // accepted, chat stays usable, and the finished report comes back later as a
+  // broadcast (the asking window may be closed by then) plus a companion
+  // bubble whose line Rocky speaks — the JARVIS loop. The runner itself lives
+  // in researchTask.ts, shared with the push-to-talk voice route.
+  ipcMain.handle(CH.RESEARCH_START, (e, rawTopic: string) => {
+    const onProgress = (line: string) => {
+      if (!e.sender.isDestroyed()) e.sender.send(EV.CHAT_PROGRESS, { line });
+    };
+    return startDetachedResearch(
+      typeof rawTopic === 'string' ? rawTopic : '',
+      deps.emitReply,
+      onProgress,
+    );
+  });
+  ipcMain.handle(CH.RESEARCH_CANCEL, () => research.cancel());
+
+  ipcMain.handle(CH.DECISION_DISTILL, (_e, messages: ChatMessage[]) =>
+    distillDecision(Array.isArray(messages) ? messages : [], store.get()),
+  );
+  ipcMain.handle(CH.DECISION_LOG, (_e, draft: DecisionDraft) => {
+    if (!draft || typeof draft.decision !== 'string') return null;
+    return decisions.add({
+      decision: draft.decision,
+      reasons: typeof draft.reasons === 'string' ? draft.reasons : '',
+      expectedOutcome: typeof draft.expectedOutcome === 'string' ? draft.expectedOutcome : '',
+    });
+  });
+  ipcMain.handle(CH.DECISION_LIST, () => decisions.list());
+  ipcMain.handle(CH.DECISION_RESOLVE, (_e, args: { id: string; resolution: string }) => {
+    if (args && typeof args.id === 'string') {
+      decisions.resolve(args.id, typeof args.resolution === 'string' ? args.resolution : '');
+    }
+  });
+  ipcMain.handle(CH.DECISION_DELETE, (_e, id: string) => {
+    if (typeof id === 'string') decisions.delete(id);
+  });
+
+  ipcMain.handle(CH.OPEN_EXTERNAL, (_e, url: string) => {
+    // http/https only — never file:, javascript:, etc.
+    try {
+      const parsed = new URL(typeof url === 'string' ? url : '');
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        void shell.openExternal(parsed.toString());
+      }
+    } catch {
+      /* not a valid URL — ignore */
     }
   });
 

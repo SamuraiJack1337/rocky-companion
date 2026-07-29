@@ -431,6 +431,18 @@ export interface Settings {
   weeklyReflectionNudge: boolean;
   /** ISO timestamp of the last weekly-reflection offer (rate limiting). */
   lastWeeklyNudgeISO: string | null;
+
+  // ── Web access (Stage 2: research + conversation) ─────────────────────────
+  /** Rocky may search the web and read pages during chat and research. */
+  webSearchEnabled: boolean;
+  /**
+   * Separate explicit opt-in required before ANY search text or page address
+   * leaves the machine (to the search service and the pages Rocky reads).
+   * Applies in BOTH provider modes — local users chose local for privacy, so
+   * web egress is its own decision. Without it, webSearchEnabled is coerced
+   * back off (see store.ts) and Rocky stays notebook-only.
+   */
+  webSearchConsentGiven: boolean;
 }
 
 export const INTERVAL_MIN = 1;
@@ -483,6 +495,8 @@ export const DEFAULT_SETTINGS: Settings = {
   openaiEmbedModel: 'text-embedding-3-small',
   weeklyReflectionNudge: true,
   lastWeeklyNudgeISO: null,
+  webSearchEnabled: false,
+  webSearchConsentGiven: false,
 };
 
 // ── Notes + conversation (Stage 1: thinking companion) ───────────────────────
@@ -510,10 +524,21 @@ export const NOTE_MAX_LENGTH = 4000;
 
 export type ChatRole = 'user' | 'rocky';
 
-/** One turn of the chat-window conversation (kept in-memory only, renderer-side). */
+/**
+ * One turn of the chat-window conversation. Persisted locally in
+ * userData/chat-history.json (owner-only, user-clearable) so a conversation
+ * survives closing the window; it never leaves the machine except as model
+ * context for the selected provider.
+ */
 export interface ChatMessage {
   role: ChatRole;
   text: string;
+}
+
+/** A web page Rocky searched or read while composing a reply. */
+export interface WebSource {
+  title: string;
+  url: string;
 }
 
 /** Result of a chat or reflection request. Errors are in-character lines. */
@@ -522,6 +547,12 @@ export interface ChatResult {
   reply?: string;
   /** Notes whose text was shown to the model for this reply (for the UI). */
   usedNotes?: NoteView[];
+  /** Web pages Rocky cited or read for this reply (for the sources row). */
+  sources?: WebSource[];
+  /** The model routed this turn into a detached research task on this topic
+   *  (start_research tool). When main returns it to a window, the task is
+   *  already running and `reply` is the in-persona ack. */
+  startResearch?: string;
   error?: string;
 }
 
@@ -594,3 +625,67 @@ export function clampInterval(minutes: number): number {
   if (!Number.isFinite(minutes)) return DEFAULT_SETTINGS.intervalMinutes;
   return Math.min(INTERVAL_MAX, Math.max(INTERVAL_MIN, Math.round(minutes)));
 }
+
+// ── Research tasks (Stage 2) ──────────────────────────────────────────────────
+// A background research run: Rocky plans sub-queries, searches, reads pages,
+// and synthesizes a report. One task at a time, cancellable, delivered into
+// the chat window as an ordinary Rocky message with sources.
+
+/** Result of a finished research task. Errors are in-character. */
+export interface ResearchResult {
+  ok: boolean;
+  /** The synthesized report (rendered, ready to display). */
+  report?: string;
+  /** A 2-3 sentence digest of the report, written to be spoken aloud. */
+  summary?: string;
+  sources?: WebSource[];
+  /** True when the run ended because the user cancelled it (no bubble then). */
+  cancelled?: boolean;
+  error?: string;
+}
+
+/** Acknowledgment that a research task was (or wasn't) kicked off. */
+export interface ResearchStart {
+  started: boolean;
+  /** In-character reason when not started (already running, no web consent…). */
+  error?: string;
+}
+
+// ── Decision journal (Stage 2) ────────────────────────────────────────────────
+// Decisions are first-class records Rocky follows up on later. Always captured
+// explicitly by the user (the model distills, the human confirms); stored
+// locally at userData/decisions.json, never leaves the machine except as
+// chat context for the selected provider.
+
+/** The model-distilled draft of a decision, confirmed by the user before saving. */
+export interface DecisionDraft {
+  decision: string;
+  reasons: string;
+  expectedOutcome: string;
+}
+
+export type DecisionStatus = 'open' | 'resolved';
+
+/** A saved decision. */
+export interface DecisionRecord extends DecisionDraft {
+  id: string;
+  /** ISO timestamp of capture. */
+  createdAt: string;
+  /** ISO timestamp after which Rocky may ask how it went. */
+  followUpAfter: string;
+  status: DecisionStatus;
+  /** One-line outcome, set when resolved. */
+  resolution?: string;
+}
+
+/** Result of distilling the conversation into a decision draft. */
+export interface DecisionDraftResult {
+  ok: boolean;
+  draft?: DecisionDraft;
+  error?: string;
+}
+
+/** Longest text accepted per decision field (clamped at save time). */
+export const DECISION_FIELD_MAX_LENGTH = 1000;
+/** Default follow-up horizon for a new decision. */
+export const DECISION_FOLLOW_UP_DAYS = 14;

@@ -1,13 +1,23 @@
-// Rocky Notes window: a conversation with Rocky about the user's own notes
-// (Talk tab) and the notebook itself (Notebook tab). Conversation history is
-// deliberately in-memory only — closing the window forgets the chat; only
-// notes persist. All model access happens in main via window.rocky.
+// Rocky Notes window: a conversation with Rocky about the user's own notes and
+// the wider world (Talk tab) and the notebook + decisions (Notebook tab). The
+// transcript now persists locally (userData/chat-history.json) so a long
+// sounding-board or research thread survives closing the window; the user can
+// wipe it with Clear chat. All model and web access happens in main via
+// window.rocky — nothing here reaches a key or the network directly.
 //
-// Rocky's replies are spoken through the same TTS path as his bubbles when the
+// Rocky's replies are spoken through the same TTS path as his bubbles when a
 // spoken voice is configured (main enforces key + consent; we only ask).
 
-import type { ChatMessage, NoteView, ReflectionKind, Settings } from '../shared/types';
+import type {
+  ChatMessage,
+  DecisionRecord,
+  NoteView,
+  ReflectionKind,
+  Settings,
+  WebSource,
+} from '../shared/types';
 import { noteSnippet } from '../shared/persona';
+import { parseResearchIntent } from '../shared/voiceIntent';
 import { VoiceRecorder } from './recorder';
 import { SpokenVoice } from './spokenVoice';
 
@@ -30,10 +40,16 @@ const chatLog = el<HTMLDivElement>('chat-log');
 const chatInput = el<HTMLTextAreaElement>('chat-input');
 const sendBtn = el<HTMLButtonElement>('send');
 const saveNoteBtn = el<HTMLButtonElement>('save-note');
+const researchBtn = el<HTMLButtonElement>('research');
 const micBtn = el<HTMLButtonElement>('mic');
+const voiceChatBtn = el<HTMLButtonElement>('voice-chat');
+const clearChatBtn = el<HTMLButtonElement>('clear-chat');
+const logDecisionBtn = el<HTMLButtonElement>('log-decision');
 const talkStatus = el<HTMLDivElement>('talk-status');
 const notesList = el<HTMLDivElement>('notes-list');
 const topicChips = el<HTMLDivElement>('topic-chips');
+const decisionsSection = el<HTMLDivElement>('decisions-section');
+const decisionsList = el<HTMLDivElement>('decisions-list');
 const noteInput = el<HTMLInputElement>('note-input');
 const addNoteBtn = el<HTMLButtonElement>('add-note');
 const clearNotesBtn = el<HTMLButtonElement>('clear-notes');
@@ -49,6 +65,9 @@ const recorder = new VoiceRecorder();
 const spoken = new SpokenVoice();
 let settings: Settings | null = null;
 let busy = false;
+/** True while a click-to-talk voice turn is running (drives the re-arm label). */
+let voiceChatActive = false;
+let researching = false;
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 
@@ -78,7 +97,16 @@ function paintEmptyLog(): void {
   chatLog.appendChild(empty);
 }
 
-function appendMessage(role: 'user' | 'rocky', text: string, options?: { error?: boolean; meta?: string }): void {
+interface AppendOptions {
+  error?: boolean;
+  meta?: string;
+  /** Web pages Rocky drew on — rendered as a clickable link row. */
+  sources?: WebSource[];
+  /** Show a "Keep" button that saves this reply (with sources) as a note. */
+  keepable?: boolean;
+}
+
+function appendMessage(role: 'user' | 'rocky', text: string, options?: AppendOptions): void {
   if (chatLog.querySelector('.empty-log')) chatLog.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = `msg ${role}${options?.error ? ' error' : ''}`;
@@ -91,15 +119,64 @@ function appendMessage(role: 'user' | 'rocky', text: string, options?: { error?:
     meta.textContent = options.meta;
     bubble.appendChild(meta);
   }
+  if (options?.sources && options.sources.length > 0) {
+    const row = document.createElement('div');
+    row.className = 'sources';
+    for (const source of options.sources) {
+      const link = document.createElement('a');
+      link.textContent = source.title || source.url;
+      link.title = source.url;
+      link.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        void window.rocky.openExternal(source.url);
+      });
+      row.appendChild(link);
+    }
+    bubble.appendChild(row);
+  }
+  if (options?.keepable && !options.error) {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.textContent = 'Keep';
+    keep.title = 'Save this to the notebook';
+    keep.addEventListener('click', () => void keepReply(text, options.sources, keep));
+    actions.appendChild(keep);
+    bubble.appendChild(actions);
+  }
   wrap.appendChild(bubble);
   chatLog.appendChild(wrap);
   chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+/** Save a Rocky reply (with its sources appended as plain text) to the notebook. */
+async function keepReply(text: string, sources: WebSource[] | undefined, btn: HTMLButtonElement): Promise<void> {
+  const body =
+    sources && sources.length > 0
+      ? `${text}\n\nSources:\n${sources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`
+      : text;
+  try {
+    const result = await window.rocky.addNote(body);
+    if (result.ok) {
+      btn.textContent = 'Kept ✓';
+      btn.disabled = true;
+      setStatus(talkStatus, 'Kept in the notebook.', 'ok');
+    } else {
+      setStatus(talkStatus, result.error ?? 'Could not keep that.', 'err');
+    }
+  } catch {
+    setStatus(talkStatus, 'Could not keep that.', 'err');
+  }
 }
 
 function setBusy(value: boolean): void {
   busy = value;
   sendBtn.disabled = value;
   saveNoteBtn.disabled = value;
+  micBtn.disabled = value;
+  // Research toggles its own label/disabled state; leave it alone while running.
+  if (!researching) researchBtn.disabled = value;
   for (const b of reflectButtons) b.disabled = value;
 }
 
@@ -108,16 +185,30 @@ function usedNotesMeta(notes: NoteView[] | undefined): string | undefined {
   return `drew on ${notes.length} note${notes.length === 1 ? '' : 's'}`;
 }
 
-/** Speak Rocky's reply through the configured spoken voice (best-effort). */
+/**
+ * Speak Rocky's reply through the configured spoken voice (best-effort).
+ * Resolves only once playback finishes, so a voice turn knows when to re-arm.
+ * Supports both spoken tiers: cloud OpenAI TTS and the offline Kokoro voice.
+ */
 async function speak(text: string): Promise<void> {
-  if (!settings || settings.voiceMode !== 'openai' || settings.muted) return;
-  const segments = await window.rocky.speakLine(text).catch(() => null);
+  if (!settings || settings.muted) return;
+  const mode = settings.voiceMode;
+  if (mode !== 'openai' && mode !== 'offline') return;
+  const segments = await (mode === 'openai'
+    ? window.rocky.speakLine(text)
+    : window.rocky.speakLineOffline(text)
+  ).catch(() => null);
   if (segments && segments.length) {
-    void spoken.playSequence(segments, settings.voicePitch).catch(() => 0);
+    await spoken.playSequence(segments, settings.voicePitch).catch(() => 0);
   }
 }
 
-async function send(): Promise<void> {
+/**
+ * One chat turn. When `andSpeak` is set (voice-chat turns), Rocky's reply is
+ * spoken and the promise resolves only after playback, so the caller can re-arm
+ * the mic for the next turn.
+ */
+async function send(andSpeak = false): Promise<void> {
   const text = chatInput.value.trim();
   if (!text || busy) return;
   chatInput.value = '';
@@ -130,9 +221,18 @@ async function send(): Promise<void> {
     const result = await window.rocky.sendChat(messages);
     if (result.ok && result.reply) {
       messages.push({ role: 'rocky', text: result.reply });
-      appendMessage('rocky', result.reply, { meta: usedNotesMeta(result.usedNotes) });
+      appendMessage('rocky', result.reply, {
+        meta: usedNotesMeta(result.usedNotes),
+        sources: result.sources,
+        keepable: true,
+      });
       setStatus(talkStatus, '');
-      void speak(result.reply);
+      updateDecisionAffordance();
+      // The model routed this turn into research (main already started the
+      // task); the reply is the ack — paint the running state so Cancel works.
+      if (result.startResearch) paintResearchRunning();
+      if (andSpeak) await speak(result.reply);
+      else void speak(result.reply);
     } else {
       appendMessage('rocky', result.error ?? 'Rocky lost the thread.', { error: true });
       setStatus(talkStatus, '');
@@ -145,6 +245,11 @@ async function send(): Promise<void> {
   }
 }
 
+/** Show the "Log decision" button once a conversation has some substance. */
+function updateDecisionAffordance(): void {
+  logDecisionBtn.hidden = messages.filter((m) => m.role === 'user').length < 1;
+}
+
 async function reflect(kind: ReflectionKind, label: string): Promise<void> {
   if (busy) return;
   appendMessage('user', label);
@@ -155,7 +260,8 @@ async function reflect(kind: ReflectionKind, label: string): Promise<void> {
     const result = await window.rocky.reflect(kind);
     if (result.ok && result.reply) {
       messages.push({ role: 'rocky', text: result.reply });
-      appendMessage('rocky', result.reply, { meta: usedNotesMeta(result.usedNotes) });
+      appendMessage('rocky', result.reply, { meta: usedNotesMeta(result.usedNotes), keepable: true });
+      updateDecisionAffordance();
       void speak(result.reply);
     } else {
       appendMessage('rocky', result.error ?? 'Rocky lost the thread.', { error: true });
@@ -173,6 +279,190 @@ chatInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     void send();
+  }
+});
+
+// ── Research (detached background task) ────────────────────────────────────────
+// startResearch resolves as soon as main accepts the task; the chat stays fully
+// usable while Rocky works. The finished report arrives via onResearchDone —
+// and Rocky announces it himself through the companion bubble + spoken digest,
+// so this window doesn't need to be open when it lands.
+
+/** True when THIS window witnessed the start (its "Research: …" line is shown). */
+let sawResearchStart = false;
+
+function resetResearchUi(): void {
+  researching = false;
+  sawResearchStart = false;
+  researchBtn.textContent = 'Research';
+  researchBtn.classList.remove('running');
+}
+
+/** A research task is running (started here or routed by the model in main). */
+function paintResearchRunning(): void {
+  researching = true;
+  sawResearchStart = true;
+  researchBtn.textContent = 'Cancel';
+  researchBtn.classList.add('running');
+}
+
+/** Kick off a research task and paint the started state. */
+async function startResearchTask(topic: string): Promise<boolean> {
+  if (researching || !topic) return false;
+  appendMessage('user', `Research: ${topic}`);
+  paintResearchRunning();
+  setStatus(talkStatus, 'Rocky begins researching…', 'live');
+  try {
+    const start = await window.rocky.startResearch(topic);
+    if (!start.started) {
+      appendMessage('rocky', start.error ?? 'Rocky could not start that research.', { error: true });
+      resetResearchUi();
+      setStatus(talkStatus, '');
+      return false;
+    }
+    return true;
+  } catch {
+    appendMessage('rocky', 'Rocky could not start that research.', { error: true });
+    resetResearchUi();
+    setStatus(talkStatus, '');
+    return false;
+  }
+}
+
+researchBtn.addEventListener('click', () => {
+  if (researching) {
+    void window.rocky.cancelResearch();
+    setStatus(talkStatus, 'Rocky is wrapping up…', 'muted');
+    return;
+  }
+  const topic = chatInput.value.trim();
+  if (!topic || busy) return;
+  chatInput.value = '';
+  autoGrow();
+  void startResearchTask(topic);
+});
+
+// The finished report — from a task started in this window or any other.
+window.rocky.onResearchDone((done) => {
+  const witnessed = sawResearchStart;
+  resetResearchUi();
+  setStatus(talkStatus, '');
+  if (done.cancelled) {
+    setStatus(talkStatus, 'Research set down.', 'muted');
+    return;
+  }
+  if (done.ok && done.report) {
+    // Mirror the turn into the in-memory array (main already persisted it).
+    if (!witnessed) appendMessage('user', `Research: ${done.topic}`);
+    messages.push({ role: 'user', text: `Research: ${done.topic}` });
+    messages.push({ role: 'rocky', text: done.report });
+    appendMessage('rocky', done.report, { sources: done.sources, keepable: true });
+    updateDecisionAffordance();
+  } else {
+    appendMessage('rocky', done.error ?? 'Rocky came back empty-handed.', { error: true });
+  }
+});
+
+// ── Voice conversation (click to talk, Rocky replies aloud) ────────────────────
+
+async function toggleVoiceChat(): Promise<void> {
+  if (voiceChatActive) return; // already mid-turn; ignore until it finishes
+  if (recorder.isActive()) {
+    // Stop recording → transcribe → send → speak → re-arm.
+    voiceChatBtn.classList.remove('recording');
+    voiceChatActive = true;
+    setStatus(talkStatus, 'Rocky listens back…', 'live');
+    try {
+      const wav = await recorder.stop();
+      if (!wav) {
+        setStatus(talkStatus, 'Rocky heard only air.', 'err');
+        return;
+      }
+      const result = await window.rocky.transcribeVoice(wav);
+      if (!result.ok || !result.text) {
+        setStatus(talkStatus, result.error ?? 'Transcription failed.', 'err');
+        return;
+      }
+      // Spoken research command? Kick off the detached task and acknowledge
+      // aloud — Rocky announces the finished report himself via the companion.
+      const topic = parseResearchIntent(result.text);
+      if (topic && settings?.webSearchEnabled && settings.webSearchConsentGiven) {
+        voiceChatBtn.classList.add('speaking');
+        const started = await startResearchTask(topic);
+        if (started) {
+          await speak('On it. This needs some digging — Rocky will call out when it is done.');
+        }
+        return;
+      }
+      chatInput.value = result.text;
+      voiceChatBtn.classList.add('speaking');
+      await send(true); // speak the reply, resolve after playback
+    } finally {
+      voiceChatBtn.classList.remove('speaking');
+      voiceChatActive = false;
+      voiceChatBtn.textContent = '🗣';
+    }
+    return;
+  }
+  if (busy) return;
+  try {
+    await recorder.start();
+    voiceChatBtn.classList.add('recording');
+    voiceChatBtn.textContent = '⏹';
+    setStatus(talkStatus, 'Speak to Rocky… click again to send.', 'live');
+  } catch {
+    setStatus(talkStatus, 'Microphone unavailable. Check System Settings → Privacy → Microphone.', 'err');
+  }
+}
+voiceChatBtn.addEventListener('click', () => void toggleVoiceChat());
+
+// ── Clear chat (delete the persisted transcript) ───────────────────────────────
+
+clearChatBtn.addEventListener('click', async () => {
+  if (messages.length === 0) return;
+  if (!window.confirm('Delete this conversation? Rocky cannot get it back.')) return;
+  try {
+    await window.rocky.clearChatHistory();
+    messages.length = 0;
+    paintEmptyLog();
+    updateDecisionAffordance();
+    setStatus(talkStatus, 'Conversation cleared.', 'ok');
+  } catch {
+    setStatus(talkStatus, 'Could not clear the conversation.', 'err');
+  }
+});
+
+// ── Log decision (distill the conversation, confirm, save) ─────────────────────
+
+logDecisionBtn.addEventListener('click', async () => {
+  if (busy || messages.length === 0) return;
+  setBusy(true);
+  setStatus(talkStatus, 'Rocky distills the decision…', 'live');
+  try {
+    const result = await window.rocky.distillDecision(messages);
+    if (!result.ok || !result.draft) {
+      setStatus(talkStatus, result.error ?? 'No clear decision to log yet.', 'err');
+      return;
+    }
+    const d = result.draft;
+    const summary = `Log this decision?\n\n${d.decision}${
+      d.reasons ? `\n\nWhy: ${d.reasons}` : ''
+    }${d.expectedOutcome ? `\n\nExpecting: ${d.expectedOutcome}` : ''}`;
+    if (!window.confirm(summary)) {
+      setStatus(talkStatus, '');
+      return;
+    }
+    const saved = await window.rocky.logDecision(d);
+    if (saved) {
+      setStatus(talkStatus, 'Decision logged. Rocky will follow up.', 'ok');
+      await refreshDecisions();
+    } else {
+      setStatus(talkStatus, 'Could not log that decision.', 'err');
+    }
+  } catch {
+    setStatus(talkStatus, 'Could not log that decision.', 'err');
+  } finally {
+    setBusy(false);
   }
 });
 
@@ -351,6 +641,87 @@ async function refreshNotes(): Promise<void> {
   }
 }
 
+// ── Decisions (in the notebook) ────────────────────────────────────────────────
+
+/** Seed the composer with a decision so "discuss this" is one click. */
+function discussDecision(decision: DecisionRecord): void {
+  selectTab('talk');
+  chatInput.value = `About my decision "${noteSnippet(decision.decision, 100)}": `;
+  chatInput.dispatchEvent(new Event('input'));
+  chatInput.focus();
+  chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+}
+
+function paintDecisions(records: DecisionRecord[]): void {
+  decisionsSection.hidden = records.length === 0;
+  decisionsList.innerHTML = '';
+  for (const decision of records) {
+    const card = document.createElement('div');
+    card.className = `decision${decision.status === 'resolved' ? ' resolved' : ''}`;
+
+    const head = document.createElement('div');
+    head.className = 'decision-head';
+    const when = document.createElement('span');
+    when.className = 'decision-when';
+    when.textContent = `${formatDate(decision.createdAt)} · ${decision.status}`;
+    const discuss = document.createElement('button');
+    discuss.type = 'button';
+    discuss.className = 'decision-discuss';
+    discuss.textContent = 'Discuss';
+    discuss.addEventListener('click', () => discussDecision(decision));
+    head.append(when, discuss);
+    if (decision.status === 'open') {
+      const resolve = document.createElement('button');
+      resolve.type = 'button';
+      resolve.className = 'decision-resolve';
+      resolve.textContent = 'Resolve';
+      resolve.addEventListener('click', async () => {
+        const outcome = window.prompt('How did it hold up? (one line)') ?? '';
+        await window.rocky.resolveDecision(decision.id, outcome);
+        await refreshDecisions();
+      });
+      head.append(resolve);
+    }
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'decision-delete';
+    del.textContent = 'Delete';
+    del.addEventListener('click', async () => {
+      await window.rocky.deleteDecision(decision.id);
+      await refreshDecisions();
+    });
+    head.append(del);
+
+    const text = document.createElement('div');
+    text.className = 'decision-text';
+    text.textContent = decision.decision;
+    card.append(head, text);
+
+    const detail = [
+      decision.reasons ? `Why: ${decision.reasons}` : '',
+      decision.expectedOutcome ? `Expecting: ${decision.expectedOutcome}` : '',
+      decision.resolution ? `Outcome: ${decision.resolution}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    if (detail) {
+      const meta = document.createElement('div');
+      meta.className = 'decision-meta';
+      meta.textContent = detail;
+      card.appendChild(meta);
+    }
+    decisionsList.appendChild(card);
+  }
+}
+
+async function refreshDecisions(): Promise<void> {
+  try {
+    paintDecisions(await window.rocky.listDecisions());
+  } catch {
+    /* the notebook still works without the decisions list */
+  }
+}
+
 addNoteBtn.addEventListener('click', async () => {
   const text = noteInput.value.trim();
   if (!text) return;
@@ -386,7 +757,23 @@ clearNotesBtn.addEventListener('click', async () => {
 
 window.rocky.onNoteSaved(() => void refreshNotes());
 
-// Deep-link: Rocky's popover / tray asked for a reflection on arrival.
+// A global push-to-talk turn landed in the transcript (main already persisted
+// and spoke it through the companion) — mirror it into this window live.
+window.rocky.onChatTurn((turn) => {
+  messages.push({ role: 'user', text: turn.user });
+  messages.push({ role: 'rocky', text: turn.rocky });
+  appendMessage('user', turn.user);
+  appendMessage('rocky', turn.rocky, { sources: turn.sources, keepable: true });
+  updateDecisionAffordance();
+});
+
+// Progress lines while Rocky searches, reads, or researches (targets this window).
+window.rocky.onChatProgress(({ line }) => {
+  if (busy || researching) setStatus(talkStatus, line, 'live');
+});
+
+// Deep-link: Rocky's popover / tray asked for a reflection on arrival, or a
+// decision follow-up seeded the composer.
 const REFLECT_LABELS: Record<ReflectionKind, string> = {
   summarize: 'Summarize my notes',
   connections: 'Find connections',
@@ -394,10 +781,20 @@ const REFLECT_LABELS: Record<ReflectionKind, string> = {
   weekly: 'Weekly reflection',
 };
 window.rocky.onChatAction((cmd) => {
-  const label = REFLECT_LABELS[cmd.reflect];
-  if (label) {
+  if (cmd.reflect) {
+    const label = REFLECT_LABELS[cmd.reflect];
+    if (label) {
+      selectTab('talk');
+      void reflect(cmd.reflect, label);
+      return;
+    }
+  }
+  if (cmd.seed) {
     selectTab('talk');
-    void reflect(cmd.reflect, label);
+    chatInput.value = cmd.seed;
+    chatInput.dispatchEvent(new Event('input'));
+    chatInput.focus();
+    chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
   }
 });
 
@@ -424,19 +821,40 @@ function describeShortcut(accelerator: string): string {
 function applySettings(s: Settings): void {
   settings = s;
   spoken.setMuted(s.muted);
-  pttHint.textContent = `Press ${describeShortcut(s.pushToTalkShortcut)} anywhere to speak a note.`;
+  pttHint.textContent = `Press ${describeShortcut(s.pushToTalkShortcut)} anywhere and just talk — Rocky keeps notes, answers questions, starts research.`;
 }
 
 window.rocky.onSettingsUpdated(applySettings);
 
+/** Restore the persisted transcript into the log and the in-memory array. */
+async function restoreHistory(): Promise<void> {
+  try {
+    const stored = await window.rocky.getChatHistory();
+    if (!stored || stored.length === 0) {
+      paintEmptyLog();
+      return;
+    }
+    messages.length = 0;
+    chatLog.innerHTML = '';
+    for (const m of stored) {
+      messages.push({ role: m.role, text: m.text });
+      appendMessage(m.role, m.text, m.role === 'rocky' ? { keepable: true } : undefined);
+    }
+    updateDecisionAffordance();
+  } catch {
+    paintEmptyLog();
+  }
+}
+
 async function init(): Promise<void> {
-  paintEmptyLog();
   try {
     applySettings(await window.rocky.getSettings());
   } catch {
     /* defaults are fine until the settings event arrives */
   }
+  await restoreHistory();
   await refreshNotes();
+  await refreshDecisions();
   chatInput.focus();
 }
 

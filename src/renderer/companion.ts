@@ -1128,7 +1128,7 @@ class Companion {
     if (reply.kind === 'listening') {
       return {
         actions: [
-          { label: 'Save note', onClick: () => void window.rocky.togglePushToTalk() },
+          { label: 'Done', onClick: () => void window.rocky.togglePushToTalk() },
           { label: 'Cancel', onClick: () => window.rocky.cancelVoiceNote() },
         ],
         // Stay up for the whole possible recording window (main caps at 2 min).

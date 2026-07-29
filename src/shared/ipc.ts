@@ -21,13 +21,19 @@ import type {
   FocusState,
   ChatMessage,
   ChatResult,
+  DecisionDraft,
+  DecisionDraftResult,
+  DecisionRecord,
   MicPermissionStatus,
   NoteView,
   ReflectionKind,
+  ResearchResult,
+  ResearchStart,
   SpeechSetupStatus,
   TranscriptionResult,
   VoiceCaptureState,
   VoiceNoteResult,
+  WebSource,
 } from './types';
 
 /** invoke/handle channels (request → response). */
@@ -93,6 +99,20 @@ export const CH = {
   CHAT_SEND: 'chat:send',
   CHAT_REFLECT: 'chat:reflect',
   OPEN_CHAT: 'window:open-chat',
+  /** Persisted chat transcript. */
+  CHAT_HISTORY_GET: 'chat:history-get',
+  CHAT_HISTORY_CLEAR: 'chat:history-clear',
+  /** Background research task (Stage 2). */
+  RESEARCH_START: 'research:start',
+  RESEARCH_CANCEL: 'research:cancel',
+  /** Decision journal (Stage 2). */
+  DECISION_DISTILL: 'decision:distill', // conversation → draft (for confirm)
+  DECISION_LOG: 'decision:log', // confirmed draft → saved record
+  DECISION_LIST: 'decision:list',
+  DECISION_RESOLVE: 'decision:resolve',
+  DECISION_DELETE: 'decision:delete',
+  /** Open a validated http(s) URL in the user's browser. */
+  OPEN_EXTERNAL: 'shell:open-external',
 } as const;
 
 /** main → renderer push events (webContents.send). */
@@ -111,6 +131,13 @@ export const EV = {
   NOTE_SAVED: 'notes:saved', // NoteView
   /** Deep-link into the chat window (e.g. auto-run a reflection). */
   CHAT_ACTION: 'chat:action', // ChatActionCommand
+  /** A voice turn (global push-to-talk) landed in the persisted transcript —
+   *  open chat windows append it live. */
+  CHAT_TURN: 'chat:turn', // ChatTurn
+  /** A progress line during a web/tool/research turn (targets the asking window). */
+  CHAT_PROGRESS: 'chat:progress', // ChatProgress
+  /** A research task finished (broadcast — the asking window may be long gone). */
+  RESEARCH_DONE: 'research:done', // ResearchDone
 } as const;
 
 /** Instruction pushed to the companion renderer's recorder. */
@@ -120,7 +147,28 @@ export interface PttCommand {
 
 /** Something the chat window should do on arrival (from tray/bubble/popover). */
 export interface ChatActionCommand {
-  reflect: ReflectionKind;
+  /** Auto-run a reflection, or seed the composer with a decision follow-up. */
+  reflect?: ReflectionKind;
+  /** Seed the composer with this text (e.g. a decision follow-up prompt). */
+  seed?: string;
+}
+
+/** A progress line pushed while Rocky searches, reads, or researches. */
+export interface ChatProgress {
+  line: string;
+}
+
+/** A complete voice turn (user + Rocky), already persisted by main. */
+export interface ChatTurn {
+  user: string;
+  rocky: string;
+  sources?: WebSource[];
+}
+
+/** A finished research task, broadcast to every window. */
+export interface ResearchDone extends ResearchResult {
+  /** The topic the task was started with, for labeling the result. */
+  topic: string;
 }
 
 /** A newer release, ready to offer. The URL stays in main; only display data crosses. */
@@ -255,11 +303,34 @@ export interface RockyAPI {
   /** Open the Notes & chat window, optionally auto-running a reflection. */
   openChat(reflect?: ReflectionKind): Promise<void>;
 
+  // ── chat history, research, decisions, external links (Stage 2) ────────────
+  /** The persisted transcript, oldest first. */
+  getChatHistory(): Promise<ChatMessage[]>;
+  /** Wipe the persisted transcript (file + memory). */
+  clearChatHistory(): Promise<void>;
+  /** Kick off a background research task; resolves immediately with whether it
+   *  started. The finished report arrives later via onResearchDone. */
+  startResearch(topic: string): Promise<ResearchStart>;
+  /** Ask the in-flight research task to stop. */
+  cancelResearch(): Promise<void>;
+  /** Distill the conversation into a decision draft for the user to confirm. */
+  distillDecision(messages: ChatMessage[]): Promise<DecisionDraftResult>;
+  /** Save a confirmed decision draft. */
+  logDecision(draft: DecisionDraft): Promise<DecisionRecord | null>;
+  listDecisions(): Promise<DecisionRecord[]>;
+  resolveDecision(id: string, resolution: string): Promise<void>;
+  deleteDecision(id: string): Promise<void>;
+  /** Open a URL in the user's browser (http/https only; validated in main). */
+  openExternal(url: string): Promise<void>;
+
   // ── push events (main → renderer) ─────────────────────────────────────────
   onPtt(cb: (cmd: PttCommand) => void): () => void;
   onVoiceState(cb: (state: VoiceCaptureState) => void): () => void;
   onNoteSaved(cb: (note: NoteView) => void): () => void;
   onChatAction(cb: (cmd: ChatActionCommand) => void): () => void;
+  onChatTurn(cb: (turn: ChatTurn) => void): () => void;
+  onChatProgress(cb: (progress: ChatProgress) => void): () => void;
+  onResearchDone(cb: (done: ResearchDone) => void): () => void;
   onReply(cb: (reply: RockyReply) => void): () => void;
   onCaptureIndicator(cb: () => void): () => void;
   onState(cb: (state: RockyState) => void): () => void;

@@ -139,10 +139,10 @@ export class ControlPopover {
     this.muteBtn.textContent = this.muted ? 'Unmute voice' : 'Mute voice';
     this.talkBtn.textContent =
       this.voiceState === 'recording'
-        ? 'Stop & save note'
+        ? 'Stop listening'
         : this.voiceState === 'processing'
           ? 'Translating…'
-          : 'Talk (voice note)';
+          : 'Talk to Rocky';
     this.talkBtn.disabled = this.voiceState === 'processing';
   }
 }

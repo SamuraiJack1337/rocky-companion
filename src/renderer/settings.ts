@@ -141,6 +141,8 @@ const whisperCliInput = el<HTMLInputElement>('whisper-cli');
 const whisperModelInput = el<HTMLInputElement>('whisper-model');
 const sttModelSelect = el<HTMLSelectElement>('stt-model');
 const notesCloudConsentInput = el<HTMLInputElement>('notes-cloud-consent');
+const webConsentInput = el<HTMLInputElement>('web-consent');
+const webEnabledInput = el<HTMLInputElement>('web-enabled');
 const ollamaChatModelInput = el<HTMLInputElement>('ollama-chat-model');
 const ollamaEmbedModelInput = el<HTMLInputElement>('ollama-embed-model');
 const openaiEmbedModelInput = el<HTMLInputElement>('openai-embed-model');
@@ -274,6 +276,8 @@ function applySettings(s: Settings): void {
   whisperModelInput.value = s.whisperModelPath;
   sttModelSelect.value = s.sttModel;
   notesCloudConsentInput.checked = s.notesCloudConsentGiven;
+  webConsentInput.checked = s.webSearchConsentGiven;
+  webEnabledInput.checked = s.webSearchEnabled;
   ollamaChatModelInput.value = s.ollamaChatModel;
   ollamaEmbedModelInput.value = s.ollamaEmbedModel;
   openaiEmbedModelInput.value = s.openaiEmbedModel;
@@ -518,6 +522,14 @@ blockedAppsInput.addEventListener('input', paintBlockedAppsStatus);
 voiceMode.addEventListener('change', paintVoiceFields);
 ttsModel.addEventListener('change', paintVoiceFields);
 ttsConsentInput.addEventListener('change', paintVoiceFields);
+
+// Web search can't be on without the egress consent; enabling it implies consent.
+webConsentInput.addEventListener('change', () => {
+  if (!webConsentInput.checked) webEnabledInput.checked = false;
+});
+webEnabledInput.addEventListener('change', () => {
+  if (webEnabledInput.checked) webConsentInput.checked = true;
+});
 
 // Keep the pitch slider and number box in lockstep, clamped to range.
 function syncPitchFrom(source: HTMLInputElement): void {
@@ -797,6 +809,9 @@ saveBtn.addEventListener('click', async () => {
     whisperModelPath: whisperModelInput.value.trim(),
     sttModel: sttModelSelect.value,
     notesCloudConsentGiven: notesCloudConsentInput.checked,
+    // Web egress requires consent; main coerces enabled→false without it.
+    webSearchConsentGiven: webConsentInput.checked,
+    webSearchEnabled: webEnabledInput.checked && webConsentInput.checked,
     ollamaChatModel: ollamaChatModelInput.value.trim(),
     ollamaEmbedModel: ollamaEmbedModelInput.value.trim() || DEFAULT_SETTINGS.ollamaEmbedModel,
     openaiEmbedModel: openaiEmbedModelInput.value.trim() || DEFAULT_SETTINGS.openaiEmbedModel,
