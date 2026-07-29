@@ -62,12 +62,6 @@ jobs:
           # tags stay full releases.
           prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
-            > ⚠️ **Preview build (Thinking Companion).** This is an opt-in
-            > pre-release with a large new feature set — voice notes, a notebook,
-            > chat, and weekly reflections — layered on top of stable Rocky.
-            > It is not offered to `0.3.x` users via auto-update. Expect rough
-            > edges; your stable install is unaffected.
-
             ## Install — macOS
 
             1. Download the `.dmg` below and open it.
