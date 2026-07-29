@@ -43,6 +43,11 @@ jobs:
           fi
 
       - run: npm ci
+      # Electron 43 downloads its binary on first require when dist/ is
+      # missing. Tests import main-process modules (which import 'electron')
+      # from parallel node:test processes, so the lazy downloads race and
+      # collide on extract. Install the binary once, deterministically.
+      - run: node node_modules/electron/install.js
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -111,6 +116,9 @@ jobs:
           fi
 
       - run: npm ci
+      # Same as the macOS job: pre-install the Electron binary so parallel
+      # test processes never race the lazy first-require download.
+      - run: node node_modules/electron/install.js
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
