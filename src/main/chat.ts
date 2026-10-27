@@ -67,6 +67,13 @@ export const RESEARCH_REPLY_MAX_LENGTH = 8_000;
 const MAX_TOOL_ITERATIONS = 5;
 /** How many open decisions may be shown to the model as context. */
 const DECISION_CONTEXT_MAX = 4;
+const activeChatControllers = new Set<AbortController>();
+
+/** Abort active local/cloud model turns during shutdown. */
+export function cancelChatRequests(): void {
+  for (const controller of activeChatControllers) controller.abort();
+  activeChatControllers.clear();
+}
 
 const LOCAL_FAILED = 'Rocky cannot reach the local brain (Ollama). Is it running, {name}?';
 const CLOUD_FAILED = 'Rocky could not reach the cloud brain, {name}.';
@@ -93,6 +100,8 @@ export interface CompleteOptions {
   /** Offer the start_research routing tool. Chat turns only — never set inside
    *  a research run, or a report could recursively launch another task. */
   researchTool?: boolean;
+  /** Incremental text from providers that support streaming. */
+  onToken?: (delta: string) => void;
 }
 
 const noop = (): void => {};
@@ -147,6 +156,8 @@ export async function chatWithRocky(
   rawMessages: ChatMessage[],
   settings: Settings,
   onProgress: (line: string) => void = noop,
+  workspaceId?: string,
+  onToken?: (delta: string) => void,
 ): Promise<ChatResult> {
   const name = settings.callName;
   const history = normalizeHistory(rawMessages ?? []);
@@ -154,11 +165,12 @@ export async function chatWithRocky(
   if (!latest) return fail(EMPTY_MESSAGE, name);
 
   const queryEmbedding = (await embedTexts([latest.text], settings))?.vectors[0] ?? null;
-  const usedNotes = notes.search(latest.text, queryEmbedding, CHAT_CONTEXT_NOTES);
+  const usedNotes = notes.search(latest.text, queryEmbedding, CHAT_CONTEXT_NOTES, workspaceId);
   const usedDecisions = relevantDecisions(latest.text);
   return complete(history, usedNotes, usedDecisions, settings, {
     web: resolveWebAccess(settings),
     onProgress,
+    onToken,
     researchTool: true,
   });
 }
@@ -185,12 +197,13 @@ function relevantDecisions(query: string) {
 export async function reflectOnNotes(
   kind: ReflectionKind,
   settings: Settings,
+  workspaceId?: string,
 ): Promise<ChatResult> {
   const name = settings.callName;
   const sinceISO = reflectionIsWeekly(kind)
     ? new Date(Date.now() - 7 * 86_400_000).toISOString()
     : undefined;
-  const usedNotes = notes.recent(REFLECTION_CONTEXT_NOTES, sinceISO);
+  const usedNotes = notes.recent(REFLECTION_CONTEXT_NOTES, sinceISO, workspaceId);
   if (usedNotes.length === 0) {
     return {
       ok: true,
@@ -337,45 +350,61 @@ async function completeOpenAI(
   const key = getOpenAIKey();
   if (!key) return null;
   const controller = new AbortController();
+  activeChatControllers.add(controller);
   const timer = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
   try {
     const client = new OpenAI({ apiKey: key });
     if (options.web === 'available') options.onProgress?.('Rocky searches the web…');
     const offerResearch = options.web === 'available' && options.researchTool === true;
-    const response = await client.responses.create(
-      {
-        model: settings.openaiModel,
-        instructions: system,
-        input: toInput(history),
-        // The Responses API's built-in web search. The installed SDK names the
-        // tool 'web_search_preview'; OpenAI runs the search server-side and
-        // returns url_citation annotations we harvest below. The start_research
-        // function tool rides along on chat turns as a pure routing signal —
-        // its call is intercepted below, never answered.
-        ...(options.web === 'available'
-          ? {
-              tools: [
-                { type: 'web_search_preview' as const },
-                ...(offerResearch ? [OPENAI_RESEARCH_TOOL] : []),
-              ],
-            }
-          : {}),
-      },
-      { signal: controller.signal },
-    );
+    const body = {
+      model: settings.openaiModel,
+      instructions: system,
+      input: toInput(history),
+      ...(options.web === 'available'
+        ? {
+            tools: [
+              { type: 'web_search_preview' as const },
+              ...(offerResearch ? [OPENAI_RESEARCH_TOOL] : []),
+            ],
+          }
+        : {}),
+    };
+
+    let response: unknown;
+    let text: string | null = null;
+    if (options.onToken) {
+      const stream = await client.responses.create(
+        { ...body, stream: true as const },
+        { signal: controller.signal },
+      );
+      let streamed = '';
+      for await (const rawEvent of stream) {
+        const event = rawEvent as unknown as { type?: string; delta?: string; response?: unknown };
+        if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+          streamed += event.delta;
+          options.onToken(event.delta);
+        }
+        if (event.type === 'response.completed') response = event.response;
+      }
+      text = streamed || ((response as { output_text?: string } | undefined)?.output_text ?? null);
+    } else {
+      response = await client.responses.create(body, { signal: controller.signal });
+      text = (response as { output_text?: string }).output_text ?? null;
+    }
+
     if (offerResearch) {
       const topic = startResearchTopicFromOpenAIOutput(
-        (response as { output?: unknown[] }).output,
+        (response as { output?: unknown[] } | undefined)?.output,
       );
       if (topic) return { text: '', sources: [], startResearch: topic };
     }
-    const text = response.output_text ?? null;
     if (text === null) return null;
     return { text, sources: options.web === 'available' ? harvestOpenAISources(response) : [] };
   } catch {
     return null; // Generic, silent — never leak the key or network detail.
   } finally {
     clearTimeout(timer);
+    activeChatControllers.delete(controller);
   }
 }
 
@@ -399,15 +428,17 @@ async function ollamaChat(
   messages: unknown[],
   tools: unknown[] | undefined,
   signal: AbortSignal,
+  onToken?: (delta: string) => void,
 ): Promise<{ ok: true; message: OllamaMessage } | { ok: false; toolsUnsupported: boolean }> {
   const model = settings.ollamaChatModel.trim() || settings.ollamaModel;
+  const streaming = !!onToken && (!tools || tools.length === 0);
   try {
     const res = await fetch(`${settings.ollamaHost.replace(/\/+$/, '')}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
-        stream: false,
+        stream: streaming,
         options: { temperature: 0.7 },
         messages,
         ...(tools && tools.length > 0 ? { tools } : {}),
@@ -415,20 +446,44 @@ async function ollamaChat(
       signal,
     });
     if (!res.ok) {
-      // Some models reject a request that carries tools; detect so we can retry.
       let toolsUnsupported = false;
       if (tools && (res.status === 400 || res.status === 500)) {
-        try {
-          const body = await res.text();
-          toolsUnsupported = /tool|function/i.test(body);
-        } catch {
-          /* ignore */
-        }
+        try { toolsUnsupported = /tool|function/i.test(await res.text()); } catch { /* ignore */ }
       }
       return { ok: false, toolsUnsupported };
     }
-    const data = (await res.json()) as OllamaChatResponse;
-    return { ok: true, message: data.message ?? {} };
+    if (!streaming) {
+      const data = (await res.json()) as OllamaChatResponse;
+      return { ok: true, message: data.message ?? {} };
+    }
+    if (!res.body) return { ok: false, toolsUnsupported: false };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    let content = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      pending += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line) as OllamaChatResponse;
+          const delta = event.message?.content ?? '';
+          if (delta) { content += delta; onToken?.(delta); }
+        } catch { /* ignore malformed stream line */ }
+      }
+      if (done) break;
+    }
+    if (pending.trim()) {
+      try {
+        const event = JSON.parse(pending) as OllamaChatResponse;
+        const delta = event.message?.content ?? '';
+        if (delta) { content += delta; onToken?.(delta); }
+      } catch { /* ignore malformed final line */ }
+    }
+    return { ok: true, message: { role: 'assistant', content } };
   } catch {
     return { ok: false, toolsUnsupported: false };
   }
@@ -443,6 +498,7 @@ async function completeOllama(
   if (!isLoopbackOllamaHost(settings.ollamaHost)) return null;
 
   const controller = new AbortController();
+  activeChatControllers.add(controller);
   const deadline = options.web === 'available' ? TOOL_LOOP_DEADLINE_MS : CHAT_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), deadline);
   const onProgress = options.onProgress ?? noop;
@@ -459,7 +515,7 @@ async function completeOllama(
 
     // No web: a single plain call, same as before.
     if (options.web !== 'available') {
-      const res = await ollamaChat(settings, messages, undefined, controller.signal);
+      const res = await ollamaChat(settings, messages, undefined, controller.signal, options.onToken);
       return res.ok ? { text: res.message.content ?? '', sources } : null;
     }
 
@@ -476,6 +532,7 @@ async function completeOllama(
         messages,
         useTools ? tools : undefined,
         controller.signal,
+        useTools ? undefined : options.onToken,
       );
       if (!res.ok) {
         // Model can't take tools: retry once without them and tell the model.
@@ -515,5 +572,6 @@ async function completeOllama(
     return null;
   } finally {
     clearTimeout(timer);
+    activeChatControllers.delete(controller);
   }
 }

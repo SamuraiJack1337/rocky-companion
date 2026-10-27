@@ -44,6 +44,8 @@ import {
   voiceTroubleReply,
 } from '../shared/persona';
 import { renderLine } from '../shared/lines';
+import { isPlausibleWavBase64 } from '../shared/wav';
+import { INBOX_WORKSPACE_ID } from '../shared/types';
 
 /** Recording longer than this is force-stopped (bounds renderer memory too). */
 const MAX_RECORDING_MS = 120_000;
@@ -77,6 +79,10 @@ export class VoiceNotesController {
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
   private submitTimer: ReturnType<typeof setTimeout> | null = null;
   private registeredShortcut: string | null = null;
+  /** Monotonic token that binds every renderer command to one recording. */
+  private nextSessionId = 0;
+  private activeSessionId: number | null = null;
+  private toggleInFlight = false;
 
   constructor(private readonly deps: VoiceNotesDeps) {}
 
@@ -84,55 +90,68 @@ export class VoiceNotesController {
     return this.state;
   }
 
+  getActiveSessionId(): number | null {
+    return this.activeSessionId;
+  }
+
   /** The one entry point — global shortcut, tray item, and IPC all land here. */
   async toggle(): Promise<void> {
     if (this.state === 'recording') {
-      this.beginProcessing();
+      this.beginProcessing(this.activeSessionId);
       return;
     }
-    if (this.state === 'processing') return; // ignore until the last one lands
+    if (this.state === 'processing' || this.toggleInFlight) return;
 
-    const name = this.deps.getSettings().callName;
-    const permission = getMicPermission();
-    if (permission === 'not-determined') {
-      const granted = (await requestMicPermission()) === 'granted';
-      if (!granted) {
+    this.toggleInFlight = true;
+    try {
+      const name = this.deps.getSettings().callName;
+      const permission = getMicPermission();
+      if (permission === 'not-determined') {
+        const granted = (await requestMicPermission()) === 'granted';
+        if (!granted) {
+          this.deps.showCompanion();
+          this.deps.emitReply(micDeniedReply(name));
+          return;
+        }
+      } else if (permission !== 'granted') {
         this.deps.showCompanion();
         this.deps.emitReply(micDeniedReply(name));
         return;
       }
-    } else if (permission !== 'granted') {
-      this.deps.showCompanion();
-      this.deps.emitReply(micDeniedReply(name));
-      return;
-    }
 
-    this.setState('recording');
-    this.deps.showCompanion();
-    this.deps.sendPtt({ phase: 'start' });
-    this.deps.emitReply(listeningReply(name));
-    this.stopTimer = setTimeout(() => this.beginProcessing(), MAX_RECORDING_MS);
-    this.stopTimer.unref?.();
+      const sessionId = ++this.nextSessionId;
+      this.activeSessionId = sessionId;
+      this.setState('recording');
+      this.deps.showCompanion();
+      this.deps.sendPtt({ phase: 'start', sessionId });
+      this.deps.emitReply(listeningReply(name));
+      this.stopTimer = setTimeout(() => this.beginProcessing(sessionId), MAX_RECORDING_MS);
+      this.stopTimer.unref?.();
+    } finally {
+      this.toggleInFlight = false;
+    }
   }
 
   /** Ask the renderer to stop and hand the audio over; arm a safety timeout. */
-  private beginProcessing(): void {
+  private beginProcessing(sessionId: number | null): void {
+    if (sessionId === null || sessionId !== this.activeSessionId || this.state !== 'recording') return;
     this.clearTimers();
     this.setState('processing');
-    this.deps.sendPtt({ phase: 'stop' });
+    this.deps.sendPtt({ phase: 'stop', sessionId });
     this.submitTimer = setTimeout(() => {
       // The renderer never delivered (window closed, capture failed silently).
-      this.resetToIdle();
+      if (this.activeSessionId === sessionId) this.resetToIdle(sessionId);
     }, SUBMIT_TIMEOUT_MS);
     this.submitTimer.unref?.();
   }
 
   /** Renderer capture failed or was cancelled; reset without a note. */
-  cancel(reason?: string): void {
-    if (this.state === 'idle') return;
+  cancel(reason?: string, sessionId?: number): void {
+    const active = this.activeSessionId;
+    if (this.state === 'idle' || (sessionId !== undefined && sessionId !== active)) return;
     this.clearTimers();
-    this.deps.sendPtt({ phase: 'cancel' });
-    this.resetToIdle();
+    if (active !== null) this.deps.sendPtt({ phase: 'cancel', sessionId: active });
+    this.resetToIdle(active);
     const name = this.deps.getSettings().callName;
     if (reason === 'no-audio') {
       this.deps.emitReply(noteEmptyReply(name));
@@ -145,17 +164,23 @@ export class VoiceNotesController {
     }
   }
 
-  /** The captured WAV arrives from the renderer: transcribe, classify, route.
-   *  Research commands and chat turns never touch the notebook; plain
-   *  statements are stored and confirmed exactly as before. */
-  async submit(wavBase64: string): Promise<VoiceNoteResult> {
+  /** The captured WAV arrives from the renderer: transcribe, classify, route. */
+  async submit(wavBase64: string, sessionId?: number): Promise<VoiceNoteResult> {
+    const active = this.activeSessionId;
+    if (active === null || (sessionId !== undefined && sessionId !== active)) {
+      return { ok: false, error: 'Stale voice capture ignored.' };
+    }
+    if (!isPlausibleWavBase64(wavBase64)) {
+      this.resetToIdle(active);
+      return { ok: false, error: 'Rocky received an invalid audio capture.' };
+    }
     this.clearTimers();
     const settings = this.deps.getSettings();
     const name = settings.callName;
-    // Accept audio even if a timeout already reset us — the words still matter.
     this.setState('processing');
     try {
       const transcription = await this.transcribe(wavBase64);
+      if (this.activeSessionId !== active) return { ok: false, error: 'Stale voice capture ignored.' };
       if (!transcription.ok) {
         const error = transcription.error ?? 'Rocky could not translate the sound, {name}.';
         this.deps.emitReply(voiceTroubleReply(error, name));
@@ -168,8 +193,6 @@ export class VoiceNotesController {
         return { ok: true };
       }
       if (intent.kind === 'chat') {
-        // Detached on purpose: a web-assisted answer can take a while, and the
-        // push-to-talk state machine must re-arm for the next press meanwhile.
         void this.routeChat(text, settings);
         return { ok: true };
       }
@@ -183,7 +206,7 @@ export class VoiceNotesController {
       this.enrichInBackground(note);
       return { ok: true, note };
     } finally {
-      this.resetToIdle();
+      if (this.activeSessionId === active) this.resetToIdle(active);
     }
   }
 
@@ -211,7 +234,7 @@ export class VoiceNotesController {
    */
   private async routeChat(text: string, settings: Settings): Promise<void> {
     const name = settings.callName;
-    const history = [...chatHistory.list(), { role: 'user' as const, text }];
+    const history = [...chatHistory.list(INBOX_WORKSPACE_ID), { role: 'user' as const, text }];
     const result = await chatWithRocky(history, settings);
     if (result.ok && result.startResearch) {
       const start = startDetachedResearch(result.startResearch, this.deps.emitReply);
@@ -220,7 +243,10 @@ export class VoiceNotesController {
         return;
       }
       const ack = researchAckReply(name);
-      chatHistory.appendTurn({ role: 'user', text }, { role: 'rocky', text: ack.line });
+      chatHistory.appendTurn(
+        { role: 'user', text, kind: 'chat', workspaceId: INBOX_WORKSPACE_ID },
+        { role: 'rocky', text: ack.line, kind: 'chat', workspaceId: INBOX_WORKSPACE_ID },
+      );
       this.deps.broadcastChatTurn({ user: text, rocky: ack.line });
       this.deps.emitReply(ack);
       return;
@@ -229,7 +255,12 @@ export class VoiceNotesController {
       this.deps.emitReply(voiceTroubleReply(result.error ?? CHAT_LOST, name));
       return;
     }
-    chatHistory.appendTurn({ role: 'user', text }, { role: 'rocky', text: result.reply });
+    chatHistory.appendTurn(
+      { role: 'user', text, kind: 'chat', workspaceId: INBOX_WORKSPACE_ID },
+      {
+        role: 'rocky', text: result.reply, sources: result.sources, kind: 'chat', workspaceId: INBOX_WORKSPACE_ID,
+      },
+    );
     this.deps.broadcastChatTurn({ user: text, rocky: result.reply, sources: result.sources });
     this.deps.emitReply(voiceAnswerReply(noteSnippet(result.reply, VOICE_BUBBLE_MAX_LENGTH)));
   }
@@ -293,6 +324,9 @@ export class VoiceNotesController {
 
   dispose(): void {
     this.clearTimers();
+    this.activeSessionId = null;
+    this.nextSessionId += 1;
+    this.setState('idle');
     if (this.registeredShortcut) {
       try {
         globalShortcut.unregister(this.registeredShortcut);
@@ -309,8 +343,10 @@ export class VoiceNotesController {
     this.deps.broadcastState(state);
   }
 
-  private resetToIdle(): void {
+  private resetToIdle(sessionId: number | null = this.activeSessionId): void {
+    if (sessionId !== null && this.activeSessionId !== sessionId) return;
     this.clearTimers();
+    if (sessionId === this.activeSessionId) this.activeSessionId = null;
     this.setState('idle');
   }
 

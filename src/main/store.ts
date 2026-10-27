@@ -143,6 +143,26 @@ class SettingsStore {
     if (merged.remarkStyle !== 'classic' && merged.remarkStyle !== 'realistic') {
       merged.remarkStyle = DEFAULT_SETTINGS.remarkStyle;
     }
+    if (merged.provider !== 'local' && merged.provider !== 'cloud') {
+      merged.provider = DEFAULT_SETTINGS.provider;
+    }
+    if (merged.voiceMode !== 'procedural' && merged.voiceMode !== 'offline' && merged.voiceMode !== 'openai') {
+      merged.voiceMode = DEFAULT_SETTINGS.voiceMode;
+    }
+    const booleanKeys: Array<keyof Settings> = [
+      'strictInterval', 'muted', 'ttsConsentGiven', 'musicUnderlay', 'expressiveCadence',
+      'clickThrough', 'paused', 'namePromptShown', 'updateCheckEnabled', 'consentGiven',
+      'cloudConsentGiven', 'notesCloudConsentGiven', 'weeklyReflectionNudge',
+      'webSearchEnabled', 'webSearchConsentGiven',
+    ];
+    for (const key of booleanKeys) {
+      if (typeof merged[key] !== 'boolean') {
+        (merged as unknown as Record<string, unknown>)[key] = DEFAULT_SETTINGS[key];
+      }
+    }
+    if (!Number.isFinite(merged.voicePitch) || merged.voicePitch < -6 || merged.voicePitch > 3) {
+      merged.voicePitch = DEFAULT_SETTINGS.voicePitch;
+    }
     if (!isLoopbackHost(merged.ollamaHost)) {
       merged.ollamaHost = DEFAULT_SETTINGS.ollamaHost;
     }

@@ -124,6 +124,11 @@ export class DecisionsStore {
     this.save();
   }
 
+  clear(): void {
+    this.current = [];
+    this.save();
+  }
+
   /**
    * The single oldest open decision whose follow-up time has passed, or null.
    * The scheduler uses this to surface at most one nudge per tick.

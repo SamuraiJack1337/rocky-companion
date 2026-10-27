@@ -15,7 +15,11 @@ import type {
   ReflectionKind,
   Settings,
   WebSource,
+  WorkspaceRecord,
+  TaskRecord,
+  ResearchArtifact,
 } from '../shared/types';
+import { INBOX_WORKSPACE_ID } from '../shared/types';
 import { noteSnippet } from '../shared/persona';
 import { parseResearchIntent } from '../shared/voiceIntent';
 import { VoiceRecorder } from './recorder';
@@ -39,6 +43,7 @@ const notebookPanel = el<HTMLElement>('notebook-panel');
 const chatLog = el<HTMLDivElement>('chat-log');
 const chatInput = el<HTMLTextAreaElement>('chat-input');
 const sendBtn = el<HTMLButtonElement>('send');
+const cancelChatTurnBtn = el<HTMLButtonElement>('cancel-chat-turn');
 const saveNoteBtn = el<HTMLButtonElement>('save-note');
 const researchBtn = el<HTMLButtonElement>('research');
 const micBtn = el<HTMLButtonElement>('mic');
@@ -54,6 +59,15 @@ const noteInput = el<HTMLInputElement>('note-input');
 const addNoteBtn = el<HTMLButtonElement>('add-note');
 const clearNotesBtn = el<HTMLButtonElement>('clear-notes');
 const notebookStatus = el<HTMLDivElement>('notebook-status');
+const workspaceSelect = el<HTMLSelectElement>('workspace-select');
+const addWorkspaceBtn = el<HTMLButtonElement>('add-workspace');
+const deleteWorkspaceBtn = el<HTMLButtonElement>('delete-workspace');
+const tasksList = el<HTMLDivElement>('tasks-list');
+const taskInput = el<HTMLInputElement>('task-input');
+const taskReminder = el<HTMLInputElement>('task-reminder');
+const addTaskBtn = el<HTMLButtonElement>('add-task');
+const researchArtifactsSection = el<HTMLDivElement>('research-artifacts-section');
+const researchArtifactsList = el<HTMLDivElement>('research-artifacts-list');
 const voiceState = el<HTMLSpanElement>('voice-state');
 const pttHint = el<HTMLParagraphElement>('ptt-hint');
 const reflectButtons = Array.from(
@@ -68,6 +82,12 @@ let busy = false;
 /** True while a click-to-talk voice turn is running (drives the re-arm label). */
 let voiceChatActive = false;
 let researching = false;
+let activeChatRequestId: string | null = null;
+let chatCancelled = false;
+let streamingBubble: HTMLDivElement | null = null;
+let streamingText = '';
+let allWorkspaces: WorkspaceRecord[] = [];
+let activeWorkspaceId = INBOX_WORKSPACE_ID;
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 
@@ -150,6 +170,28 @@ function appendMessage(role: 'user' | 'rocky', text: string, options?: AppendOpt
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
+function appendStreamingDelta(delta: string): void {
+  if (!delta) return;
+  streamingText += delta;
+  if (!streamingBubble) {
+    if (chatLog.querySelector('.empty-log')) chatLog.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'msg rocky';
+    streamingBubble = document.createElement('div');
+    streamingBubble.className = 'bubble';
+    wrap.appendChild(streamingBubble);
+    chatLog.appendChild(wrap);
+  }
+  streamingBubble.textContent = streamingText;
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function clearStreamingPreview(): void {
+  streamingBubble?.parentElement?.remove();
+  streamingBubble = null;
+  streamingText = '';
+}
+
 /** Save a Rocky reply (with its sources appended as plain text) to the notebook. */
 async function keepReply(text: string, sources: WebSource[] | undefined, btn: HTMLButtonElement): Promise<void> {
   const body =
@@ -157,7 +199,7 @@ async function keepReply(text: string, sources: WebSource[] | undefined, btn: HT
       ? `${text}\n\nSources:\n${sources.map((s) => `- ${s.title}: ${s.url}`).join('\n')}`
       : text;
   try {
-    const result = await window.rocky.addNote(body);
+    const result = await window.rocky.addNote(body, activeWorkspaceId);
     if (result.ok) {
       btn.textContent = 'Kept ✓';
       btn.disabled = true;
@@ -173,6 +215,8 @@ async function keepReply(text: string, sources: WebSource[] | undefined, btn: HT
 function setBusy(value: boolean): void {
   busy = value;
   sendBtn.disabled = value;
+  workspaceSelect.disabled = value;
+  cancelChatTurnBtn.hidden = !value;
   saveNoteBtn.disabled = value;
   micBtn.disabled = value;
   // Research toggles its own label/disabled state; leave it alone while running.
@@ -216,9 +260,17 @@ async function send(andSpeak = false): Promise<void> {
   appendMessage('user', text);
   messages.push({ role: 'user', text });
   setBusy(true);
+  chatCancelled = false;
+  activeChatRequestId = crypto.randomUUID();
+  clearStreamingPreview();
   setStatus(talkStatus, 'Rocky thinks…', 'live');
   try {
-    const result = await window.rocky.sendChat(messages);
+    const result = await window.rocky.sendChat(messages, activeWorkspaceId, activeChatRequestId);
+    clearStreamingPreview();
+    if (chatCancelled) {
+      setStatus(talkStatus, 'Answer cancelled.', 'muted');
+      return;
+    }
     if (result.ok && result.reply) {
       messages.push({ role: 'rocky', text: result.reply });
       appendMessage('rocky', result.reply, {
@@ -238,12 +290,24 @@ async function send(andSpeak = false): Promise<void> {
       setStatus(talkStatus, '');
     }
   } catch {
-    appendMessage('rocky', 'Rocky lost the thread. Try again, question?', { error: true });
-    setStatus(talkStatus, '');
+    clearStreamingPreview();
+    if (!chatCancelled) {
+      appendMessage('rocky', 'Rocky lost the thread. Try again, question?', { error: true });
+      setStatus(talkStatus, '');
+    }
   } finally {
+    activeChatRequestId = null;
     setBusy(false);
   }
 }
+
+cancelChatTurnBtn.addEventListener('click', () => {
+  if (!activeChatRequestId) return;
+  chatCancelled = true;
+  clearStreamingPreview();
+  setStatus(talkStatus, 'Cancelling…', 'muted');
+  void window.rocky.cancelChat();
+});
 
 /** Show the "Log decision" button once a conversation has some substance. */
 function updateDecisionAffordance(): void {
@@ -257,7 +321,7 @@ async function reflect(kind: ReflectionKind, label: string): Promise<void> {
   setBusy(true);
   setStatus(talkStatus, 'Rocky reads the notebook…', 'live');
   try {
-    const result = await window.rocky.reflect(kind);
+    const result = await window.rocky.reflect(kind, activeWorkspaceId);
     if (result.ok && result.reply) {
       messages.push({ role: 'rocky', text: result.reply });
       appendMessage('rocky', result.reply, { meta: usedNotesMeta(result.usedNotes), keepable: true });
@@ -313,7 +377,7 @@ async function startResearchTask(topic: string): Promise<boolean> {
   paintResearchRunning();
   setStatus(talkStatus, 'Rocky begins researching…', 'live');
   try {
-    const start = await window.rocky.startResearch(topic);
+    const start = await window.rocky.startResearch(topic, activeWorkspaceId);
     if (!start.started) {
       appendMessage('rocky', start.error ?? 'Rocky could not start that research.', { error: true });
       resetResearchUi();
@@ -344,9 +408,11 @@ researchBtn.addEventListener('click', () => {
 
 // The finished report — from a task started in this window or any other.
 window.rocky.onResearchDone((done) => {
+  void refreshResearchArtifacts();
   const witnessed = sawResearchStart;
   resetResearchUi();
   setStatus(talkStatus, '');
+  if (done.workspaceId && done.workspaceId !== activeWorkspaceId) return;
   if (done.cancelled) {
     setStatus(talkStatus, 'Research set down.', 'muted');
     return;
@@ -422,7 +488,7 @@ clearChatBtn.addEventListener('click', async () => {
   if (messages.length === 0) return;
   if (!window.confirm('Delete this conversation? Rocky cannot get it back.')) return;
   try {
-    await window.rocky.clearChatHistory();
+    await window.rocky.clearChatHistory(activeWorkspaceId);
     messages.length = 0;
     paintEmptyLog();
     updateDecisionAffordance();
@@ -483,7 +549,7 @@ saveNoteBtn.addEventListener('click', async () => {
   const text = chatInput.value.trim();
   if (!text || busy) return;
   try {
-    const result = await window.rocky.addNote(text);
+    const result = await window.rocky.addNote(text, activeWorkspaceId);
     if (result.ok) {
       chatInput.value = '';
       autoGrow();
@@ -535,6 +601,51 @@ micBtn.addEventListener('click', () => void toggleDictation());
 
 // ── Notebook ─────────────────────────────────────────────────────────────────
 
+async function refreshWorkspaces(preferredId = activeWorkspaceId): Promise<void> {
+  allWorkspaces = await window.rocky.listWorkspaces();
+  if (!allWorkspaces.some((workspace) => workspace.id === preferredId)) preferredId = INBOX_WORKSPACE_ID;
+  activeWorkspaceId = preferredId;
+  workspaceSelect.innerHTML = '';
+  for (const workspace of allWorkspaces) {
+    const option = document.createElement('option');
+    option.value = workspace.id;
+    option.textContent = workspace.name;
+    workspaceSelect.appendChild(option);
+  }
+  workspaceSelect.value = activeWorkspaceId;
+  deleteWorkspaceBtn.disabled = activeWorkspaceId === INBOX_WORKSPACE_ID;
+}
+
+workspaceSelect.addEventListener('change', () => {
+  activeWorkspaceId = workspaceSelect.value || INBOX_WORKSPACE_ID;
+  deleteWorkspaceBtn.disabled = activeWorkspaceId === INBOX_WORKSPACE_ID;
+  topicFilter = null;
+  void Promise.all([restoreHistory(), refreshNotes(), refreshTasks(), refreshResearchArtifacts()]);
+});
+
+addWorkspaceBtn.addEventListener('click', () => {
+  const name = window.prompt('Project name')?.trim() ?? '';
+  if (!name) return;
+  void (async () => {
+    const workspace = await window.rocky.addWorkspace(name);
+    if (!workspace) return setStatus(notebookStatus, 'Could not create that project.', 'err');
+    await refreshWorkspaces(workspace.id);
+    await Promise.all([refreshNotes(), refreshTasks(), refreshResearchArtifacts()]);
+    setStatus(notebookStatus, `Project “${workspace.name}” ready.`, 'ok');
+  })();
+});
+
+deleteWorkspaceBtn.addEventListener('click', () => {
+  const workspace = allWorkspaces.find((item) => item.id === activeWorkspaceId);
+  if (!workspace || workspace.builtIn) return;
+  if (!window.confirm(`Delete project “${workspace.name}”? Its notes will move to Inbox.`)) return;
+  void (async () => {
+    await window.rocky.deleteWorkspace(workspace.id);
+    await refreshWorkspaces(INBOX_WORKSPACE_ID);
+    await Promise.all([refreshNotes(), refreshTasks(), refreshResearchArtifacts()]);
+  })();
+});
+
 function formatDate(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime())
@@ -548,6 +659,9 @@ let topicFilter: string | null = null;
 
 /** Seed the composer with a note so "discuss this" is one click. */
 function discussNote(note: NoteView): void {
+  activeWorkspaceId = note.workspaceId || INBOX_WORKSPACE_ID;
+  workspaceSelect.value = activeWorkspaceId;
+  deleteWorkspaceBtn.disabled = activeWorkspaceId === INBOX_WORKSPACE_ID;
   selectTab('talk');
   const day = formatDate(note.createdAt) || note.createdAt.slice(0, 10);
   chatInput.value = `About my note from ${day} — "${noteSnippet(note.text, 120)}": `;
@@ -604,6 +718,20 @@ function paintNotes(): void {
     discuss.className = 'note-discuss';
     discuss.textContent = 'Discuss';
     discuss.addEventListener('click', () => discussNote(note));
+    const move = document.createElement('button');
+    move.type = 'button';
+    move.className = 'note-discuss';
+    move.textContent = 'Move';
+    move.addEventListener('click', async () => {
+      const choices = allWorkspaces.map((workspace) => workspace.name).join(', ');
+      const currentName = allWorkspaces.find((workspace) => workspace.id === note.workspaceId)?.name ?? 'Inbox';
+      const wanted = window.prompt(`Move to project (${choices})`, currentName);
+      if (!wanted) return;
+      const target = allWorkspaces.find((workspace) => workspace.name.toLowerCase() === wanted.trim().toLowerCase());
+      if (!target) return setStatus(notebookStatus, 'Project not found.', 'err');
+      await window.rocky.moveNote(note.id, target.id);
+      await refreshNotes();
+    });
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'note-delete';
@@ -612,7 +740,7 @@ function paintNotes(): void {
       await window.rocky.deleteNote(note.id);
       await refreshNotes();
     });
-    head.append(when, discuss, del);
+    head.append(when, discuss, move, del);
     const text = document.createElement('div');
     text.className = 'note-text';
     text.textContent = note.text;
@@ -633,12 +761,121 @@ function paintNotes(): void {
 
 async function refreshNotes(): Promise<void> {
   try {
-    allNotes = await window.rocky.listNotes();
+    allNotes = await window.rocky.listNotes(activeWorkspaceId);
     paintTopicChips();
     paintNotes();
   } catch {
     setStatus(notebookStatus, 'Could not load the notebook.', 'err');
   }
+}
+
+function paintTasks(records: TaskRecord[]): void {
+  tasksList.innerHTML = '';
+  if (records.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.textContent = 'No tasks in this project.';
+    tasksList.appendChild(empty);
+    return;
+  }
+  for (const task of records) {
+    const card = document.createElement('div');
+    card.className = `decision${task.status === 'completed' ? ' resolved' : ''}`;
+    const head = document.createElement('div');
+    head.className = 'decision-head';
+    const when = document.createElement('span');
+    when.className = 'decision-when';
+    when.textContent = task.remindAt
+      ? `${task.status} · reminds ${formatDate(task.remindAt)}`
+      : task.status;
+    const toggle = document.createElement('button');
+    toggle.className = 'decision-resolve';
+    toggle.textContent = task.status === 'completed' ? 'Reopen' : 'Complete';
+    toggle.addEventListener('click', async () => {
+      await window.rocky.completeTask(task.id, task.status !== 'completed');
+      await refreshTasks();
+    });
+    const del = document.createElement('button');
+    del.className = 'decision-delete';
+    del.textContent = 'Delete';
+    del.addEventListener('click', async () => {
+      await window.rocky.deleteTask(task.id);
+      await refreshTasks();
+    });
+    head.append(when, toggle, del);
+    const title = document.createElement('div');
+    title.className = 'decision-text';
+    title.textContent = task.title;
+    card.append(head, title);
+    tasksList.appendChild(card);
+  }
+}
+
+async function refreshTasks(): Promise<void> {
+  try { paintTasks(await window.rocky.listTasks(activeWorkspaceId)); } catch { /* notes remain usable */ }
+}
+
+addTaskBtn.addEventListener('click', () => {
+  const title = taskInput.value.trim();
+  if (!title) return;
+  void (async () => {
+    const remindAt = taskReminder.value ? new Date(taskReminder.value).toISOString() : undefined;
+    const task = await window.rocky.addTask({ title, workspaceId: activeWorkspaceId, remindAt });
+    if (!task) return setStatus(notebookStatus, 'Could not add that task.', 'err');
+    taskInput.value = '';
+    taskReminder.value = '';
+    await refreshTasks();
+    setStatus(notebookStatus, 'Task added.', 'ok');
+  })();
+});
+taskInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') addTaskBtn.click(); });
+
+function discussResearch(artifact: ResearchArtifact): void {
+  selectTab('talk');
+  chatInput.value = `About the research “${noteSnippet(artifact.topic, 100)}”: `;
+  chatInput.dispatchEvent(new Event('input'));
+  chatInput.focus();
+}
+
+function paintResearchArtifacts(records: ResearchArtifact[]): void {
+  researchArtifactsSection.hidden = records.length === 0;
+  researchArtifactsList.innerHTML = '';
+  for (const artifact of records) {
+    const card = document.createElement('div');
+    card.className = `decision${artifact.status === 'completed' ? ' resolved' : ''}`;
+    const head = document.createElement('div');
+    head.className = 'decision-head';
+    const when = document.createElement('span');
+    when.className = 'decision-when';
+    when.textContent = `${formatDate(artifact.updatedAt)} · ${artifact.status}`;
+    const discuss = document.createElement('button');
+    discuss.className = 'decision-discuss';
+    discuss.textContent = 'Discuss';
+    discuss.addEventListener('click', () => discussResearch(artifact));
+    const del = document.createElement('button');
+    del.className = 'decision-delete';
+    del.textContent = 'Delete';
+    del.addEventListener('click', async () => {
+      await window.rocky.deleteResearchArtifact(artifact.id);
+      await refreshResearchArtifacts();
+    });
+    head.append(when, discuss, del);
+    const title = document.createElement('div');
+    title.className = 'decision-text';
+    title.textContent = artifact.topic;
+    card.append(head, title);
+    if (artifact.summary || artifact.error) {
+      const detail = document.createElement('div');
+      detail.className = 'decision-meta';
+      detail.textContent = artifact.summary ?? artifact.error ?? '';
+      card.appendChild(detail);
+    }
+    researchArtifactsList.appendChild(card);
+  }
+}
+
+async function refreshResearchArtifacts(): Promise<void> {
+  try { paintResearchArtifacts(await window.rocky.listResearchArtifacts(activeWorkspaceId)); } catch { /* optional */ }
 }
 
 // ── Decisions (in the notebook) ────────────────────────────────────────────────
@@ -726,7 +963,7 @@ addNoteBtn.addEventListener('click', async () => {
   const text = noteInput.value.trim();
   if (!text) return;
   try {
-    const result = await window.rocky.addNote(text);
+    const result = await window.rocky.addNote(text, activeWorkspaceId);
     if (result.ok) {
       noteInput.value = '';
       setStatus(notebookStatus, 'Kept.', 'ok');
@@ -770,6 +1007,10 @@ window.rocky.onChatTurn((turn) => {
 // Progress lines while Rocky searches, reads, or researches (targets this window).
 window.rocky.onChatProgress(({ line }) => {
   if (busy || researching) setStatus(talkStatus, line, 'live');
+});
+
+window.rocky.onChatToken(({ requestId, delta }) => {
+  if (requestId === activeChatRequestId && !chatCancelled) appendStreamingDelta(delta);
 });
 
 // Deep-link: Rocky's popover / tray asked for a reflection on arrival, or a
@@ -829,16 +1070,17 @@ window.rocky.onSettingsUpdated(applySettings);
 /** Restore the persisted transcript into the log and the in-memory array. */
 async function restoreHistory(): Promise<void> {
   try {
-    const stored = await window.rocky.getChatHistory();
-    if (!stored || stored.length === 0) {
-      paintEmptyLog();
-      return;
-    }
+    const stored = await window.rocky.getChatHistory(activeWorkspaceId);
     messages.length = 0;
     chatLog.innerHTML = '';
+    if (!stored || stored.length === 0) {
+      paintEmptyLog();
+      updateDecisionAffordance();
+      return;
+    }
     for (const m of stored) {
       messages.push({ role: m.role, text: m.text });
-      appendMessage(m.role, m.text, m.role === 'rocky' ? { keepable: true } : undefined);
+      appendMessage(m.role, m.text, m.role === 'rocky' ? { keepable: true, sources: m.sources } : undefined);
     }
     updateDecisionAffordance();
   } catch {
@@ -853,9 +1095,12 @@ async function init(): Promise<void> {
     /* defaults are fine until the settings event arrives */
   }
   await restoreHistory();
-  await refreshNotes();
-  await refreshDecisions();
+  await refreshWorkspaces();
+  await Promise.all([refreshNotes(), refreshTasks(), refreshResearchArtifacts(), refreshDecisions()]);
   chatInput.focus();
 }
+
+const closeChatBtn = document.getElementById('close-chat');
+closeChatBtn?.addEventListener('click', () => window.rocky.closeSelf());
 
 void init();

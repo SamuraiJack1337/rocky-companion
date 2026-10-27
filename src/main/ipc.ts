@@ -17,6 +17,7 @@ import type {
   RockyReply,
   Settings,
 } from '../shared/types';
+import { DEFAULT_SETTINGS, INBOX_WORKSPACE_ID } from '../shared/types';
 import { store } from './store';
 import { hasOpenAIKey, setOpenAIKey, deleteOpenAIKey } from './keys';
 import {
@@ -37,19 +38,25 @@ import {
   showChatWindow,
   showLabWindow,
   showSettingsWindow,
+  windowRoleFor,
 } from './windows';
+import type { WindowRole } from './windows';
 import { renderLine } from '../shared/lines';
 import type { TtsOverrides } from '../shared/ipc';
 import type { Scheduler } from './scheduler';
 import type { FocusManager } from './focus';
 import { memory } from './memory';
 import { notes } from './notes';
+import { workspaces } from './workspaces';
+import { tasks } from './tasks';
+import { researchArtifacts } from './researchArtifacts';
 import { solveEngineering } from './engineering';
-import { chatWithRocky, distillDecision, reflectOnNotes } from './chat';
+import { chatWithRocky, cancelChatRequests, distillDecision, reflectOnNotes } from './chat';
 import { chatHistory } from './chatHistory';
 import { decisions } from './decisions';
 import { research } from './research';
 import { startDetachedResearch } from './researchTask';
+import { eraseUserContent, getPrivacySummary, getProviderHealth } from './privacy';
 import type { VoiceNotesController } from './voiceNotes';
 import {
   calculationReply,
@@ -74,20 +81,141 @@ export interface IpcDeps {
   openUpdate: () => void;
   dismissUpdate: () => void;
   farewellAndQuit: () => void;
+  /** Cancel in-flight model, speech, web, and recorder work before relaunch. */
+  shutdown: () => void;
   /** Push-to-talk orchestration (defined in main.ts, one instance). */
   voiceNotes: VoiceNotesController;
   /** A note was saved from any surface — broadcast so notebooks refresh. */
   broadcastNoteSaved: (note: NoteView) => void;
 }
 
+const ALL_ROLES: readonly WindowRole[] = ['companion', 'consent', 'settings', 'lab', 'chat'];
+const ROLE_RULES: Partial<Record<string, readonly WindowRole[]>> = {
+  [CH.CONSENT_SUBMIT]: ['consent'],
+  [CH.SETTINGS_SET]: ['settings', 'companion'],
+  [CH.PRIVACY_SUMMARY]: ['settings'],
+  [CH.PRIVACY_ERASE_CONTENT]: ['settings'],
+  [CH.PROVIDER_HEALTH]: ['settings'],
+  [CH.KEY_HAS]: ['settings', 'consent'],
+  [CH.KEY_SET]: ['settings', 'consent'],
+  [CH.KEY_DELETE]: ['settings'],
+  [CH.TTS_SPEAK]: ['companion', 'chat', 'settings'],
+  [CH.TTS_SPEAK_OFFLINE]: ['companion', 'chat', 'settings'],
+  [CH.SKINS_LIST]: ['settings'],
+  [CH.SKIN_LOAD]: ['settings', 'companion'],
+  [CH.SKINS_OPEN_FOLDER]: ['settings'],
+  [CH.OLLAMA_CHECK]: ['settings', 'consent'],
+  [CH.SCREEN_PERMISSION_CHECK]: ['settings', 'consent'],
+  [CH.SCREEN_PERMISSION_OPEN]: ['settings', 'consent'],
+  [CH.SCREEN_PERMISSION_RESET]: ['settings'],
+  [CH.CAPTURE_DIAGNOSE]: ['settings'],
+  [CH.RELAUNCH]: ['settings'],
+  [CH.LOOK_NOW]: ['companion'],
+  [CH.SET_CLICK_THROUGH]: ['companion', 'settings'],
+  [CH.FOCUS_GET]: ['companion', 'lab'],
+  [CH.FOCUS_START]: ['companion', 'lab'],
+  [CH.FOCUS_CANCEL]: ['companion', 'lab'],
+  [CH.FIST_BUMP]: ['companion', 'lab'],
+  [CH.MEMORY_GET]: ['lab'],
+  [CH.MEMORY_RESET]: ['lab'],
+  [CH.ENGINEERING_SOLVE]: ['lab'],
+  [CH.UPDATE_OPEN]: ['companion'],
+  [CH.UPDATE_DISMISS]: ['companion'],
+  [CH.MIC_PERMISSION_CHECK]: ['settings', 'chat', 'companion'],
+  [CH.MIC_PERMISSION_REQUEST]: ['settings', 'chat', 'companion'],
+  [CH.SPEECH_SETUP_CHECK]: ['settings'],
+  [CH.PTT_TOGGLE]: ['companion'],
+  [CH.VOICE_NOTE_SUBMIT]: ['companion'],
+  [CH.VOICE_NOTE_CANCEL]: ['companion'],
+  [CH.VOICE_TRANSCRIBE]: ['chat'],
+  [CH.NOTES_LIST]: ['chat'],
+  [CH.NOTES_ADD]: ['chat'],
+  [CH.NOTES_DELETE]: ['chat'],
+  [CH.NOTES_CLEAR]: ['chat'],
+  [CH.NOTES_MOVE]: ['chat'],
+  [CH.WORKSPACES_LIST]: ['chat'],
+  [CH.WORKSPACES_ADD]: ['chat'],
+  [CH.WORKSPACES_DELETE]: ['chat'],
+  [CH.TASKS_LIST]: ['chat'],
+  [CH.TASKS_ADD]: ['chat'],
+  [CH.TASKS_COMPLETE]: ['chat'],
+  [CH.TASKS_DELETE]: ['chat'],
+  [CH.RESEARCH_ARTIFACTS_LIST]: ['chat'],
+  [CH.RESEARCH_ARTIFACTS_DELETE]: ['chat'],
+  [CH.CHAT_SEND]: ['chat'],
+  [CH.CHAT_CANCEL]: ['chat'],
+  [CH.CHAT_REFLECT]: ['chat'],
+  [CH.CHAT_HISTORY_GET]: ['chat'],
+  [CH.CHAT_HISTORY_CLEAR]: ['chat'],
+  [CH.RESEARCH_START]: ['chat'],
+  [CH.RESEARCH_CANCEL]: ['chat'],
+  [CH.DECISION_DISTILL]: ['chat'],
+  [CH.DECISION_LOG]: ['chat'],
+  [CH.DECISION_LIST]: ['chat'],
+  [CH.DECISION_RESOLVE]: ['chat'],
+  [CH.DECISION_DELETE]: ['chat'],
+  [CH.OPEN_EXTERNAL]: ['chat'],
+};
+
+function authorizeSender(sender: Electron.WebContents, channel: string): WindowRole {
+  const role = windowRoleFor(sender);
+  const allowed = ROLE_RULES[channel] ?? ALL_ROLES;
+  if (!role || !allowed.includes(role)) {
+    throw new Error(`Unauthorized IPC request: ${channel}`);
+  }
+  return role;
+}
+
+/** Runtime-filter settings patches; TypeScript types do not protect IPC. */
+function sanitizeSettingsPatch(raw: unknown, role: WindowRole): Partial<Settings> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const input = raw as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+  const allowedKeys = role === 'companion' ? new Set(['muted']) : new Set(Object.keys(defaults));
+  for (const [key, value] of Object.entries(input)) {
+    if (!allowedKeys.has(key) || !(key in defaults)) continue;
+    const expected = defaults[key];
+    if (key === 'blockedApps') {
+      if (Array.isArray(value) && value.every((item) => typeof item === 'string')) output[key] = value;
+    } else if (key === 'windowPosition') {
+      const candidate = value as { x?: unknown; y?: unknown } | null;
+      if (
+        value === null ||
+        (typeof value === 'object' && value !== null &&
+          typeof candidate?.x === 'number' && Number.isFinite(candidate.x) &&
+          typeof candidate?.y === 'number' && Number.isFinite(candidate.y))
+      ) output[key] = value;
+    } else if (typeof value === typeof expected) {
+      output[key] = value;
+    }
+  }
+  return output as Partial<Settings>;
+}
+
 export function registerIpc(deps: IpcDeps): void {
+  type InvokeHandler = (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any;
+  const secureHandle = (channel: string, listener: InvokeHandler): void => {
+    ipcMain.handle(channel, (event, ...args) => {
+      authorizeSender(event.sender, channel);
+      return listener(event, ...args);
+    });
+  };
   // ── settings ───────────────────────────────────────────────────────────
-  ipcMain.handle(CH.SETTINGS_GET, () => store.get());
-  ipcMain.handle(CH.SETTINGS_SET, (_e, patch: Partial<Settings>) => deps.applySettings(patch ?? {}));
+  secureHandle(CH.SETTINGS_GET, () => store.get());
+  secureHandle(CH.SETTINGS_SET, (event, patch: unknown) =>
+    deps.applySettings(sanitizeSettingsPatch(patch, windowRoleFor(event.sender) ?? 'companion')),
+  );
+  secureHandle(CH.PRIVACY_SUMMARY, () => getPrivacySummary(store.get()));
+  secureHandle(CH.PRIVACY_ERASE_CONTENT, () => {
+    eraseUserContent();
+    return getPrivacySummary(store.get());
+  });
+  secureHandle(CH.PROVIDER_HEALTH, () => getProviderHealth(store.get()));
 
   // ── cloud key (BYOK) — validated + stored here, never echoed back ────────
-  ipcMain.handle(CH.KEY_HAS, () => hasOpenAIKey());
-  ipcMain.handle(CH.KEY_SET, async (_e, key: string) => {
+  secureHandle(CH.KEY_HAS, () => hasOpenAIKey());
+  secureHandle(CH.KEY_SET, async (_e, key: string) => {
     const model = store.get().openaiModel;
     const valid = await validateOpenAIKey(key, model);
     if (!valid.ok) return valid;
@@ -95,13 +223,13 @@ export function registerIpc(deps: IpcDeps): void {
     if (stored.ok) deps.rebuildProvider();
     return stored;
   });
-  ipcMain.handle(CH.KEY_DELETE, () => {
+  secureHandle(CH.KEY_DELETE, () => {
     deleteOpenAIKey();
     deps.rebuildProvider();
   });
 
   // ── spoken voice (TTS) — key stays in main; only audio crosses to renderer ─
-  ipcMain.handle(
+  secureHandle(
     CH.TTS_SPEAK,
     (_e, args: { text: string; overrides?: TtsOverrides }) =>
       synthesizeSpeech(args?.text ?? '', args?.overrides),
@@ -111,7 +239,7 @@ export function registerIpc(deps: IpcDeps): void {
   // Null when the engine isn't bundled for this platform, so callers fall back
   // to the OS voice. Speaker + cadence come from settings, resolved here so the
   // synth module stays electron-light and testable.
-  ipcMain.handle(CH.TTS_SPEAK_OFFLINE, (_e, args: { text: string }) => {
+  secureHandle(CH.TTS_SPEAK_OFFLINE, (_e, args: { text: string }) => {
     const s = store.get();
     return synthesizeOffline(args?.text ?? '', {
       sid: s.offlineTtsSpeaker,
@@ -120,22 +248,22 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // ── creature skins (drop-in art) ──────────────────────────────────────────
-  ipcMain.handle(CH.SKINS_LIST, () => listSkins());
-  ipcMain.handle(CH.SKIN_LOAD, (_e, name: string) => loadSkin(name));
-  ipcMain.handle(CH.SKINS_OPEN_FOLDER, () => openSkinsFolder());
+  secureHandle(CH.SKINS_LIST, () => listSkins());
+  secureHandle(CH.SKIN_LOAD, (_e, name: string) => loadSkin(name));
+  secureHandle(CH.SKINS_OPEN_FOLDER, () => openSkinsFolder());
 
   // ── connectivity / permissions ───────────────────────────────────────────
-  ipcMain.handle(CH.OLLAMA_CHECK, (_e, args: { host: string; model: string }) =>
+  secureHandle(CH.OLLAMA_CHECK, (_e, args: { host: string; model: string }) =>
     // Warm up the model here so Settings reproduces the app's real behavior
     // instead of only pinging /api/tags.
     probeOllama(args.host, args.model, { warmup: true }),
   );
-  ipcMain.handle(CH.SCREEN_PERMISSION_CHECK, () => getScreenPermission());
-  ipcMain.handle(CH.SCREEN_PERMISSION_OPEN, () => openScreenSettings());
-  ipcMain.handle(CH.SCREEN_PERMISSION_RESET, () => resetScreenPermission());
+  secureHandle(CH.SCREEN_PERMISSION_CHECK, () => getScreenPermission());
+  secureHandle(CH.SCREEN_PERMISSION_OPEN, () => openScreenSettings());
+  secureHandle(CH.SCREEN_PERMISSION_RESET, () => resetScreenPermission());
   // One cheap in-memory test capture + the status. `granted` + `blank` is the
   // stale-TCC-grant signature the settings window keys its "Fix" button on.
-  ipcMain.handle(CH.CAPTURE_DIAGNOSE, async () => {
+  secureHandle(CH.CAPTURE_DIAGNOSE, async () => {
     const status = getScreenPermission();
     let blank = true;
     try {
@@ -148,22 +276,24 @@ export function registerIpc(deps: IpcDeps): void {
   });
   // macOS applies a Screen Recording grant only to a fresh launch, so the
   // settings window offers a one-click relaunch after the user flips the toggle.
-  ipcMain.handle(CH.RELAUNCH, () => {
+  secureHandle(CH.RELAUNCH, () => {
+    deps.shutdown();
     app.relaunch();
     app.exit(0);
   });
 
   // ── consent + lifecycle ──────────────────────────────────────────────────
-  ipcMain.handle(CH.CONSENT_SUBMIT, (_e, payload: ConsentPayload) => {
+  secureHandle(CH.CONSENT_SUBMIT, (_e, raw: unknown) => {
+    const payload = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+    const provider = payload.provider === 'cloud' && payload.cloudConsent === true ? 'cloud' : 'local';
+    const callName = typeof payload.callName === 'string' ? payload.callName : undefined;
     deps.applySettings({
-      provider: payload.provider,
+      provider,
       consentGiven: true,
-      cloudConsentGiven: payload.cloudConsent || store.get().cloudConsentGiven,
+      cloudConsentGiven: payload.cloudConsent === true || store.get().cloudConsentGiven,
       // The consent flow already asked for a name, so the upgrade nudge about
       // the setting never needs to fire for this install.
-      ...(typeof payload.callName === 'string' && payload.callName.trim()
-        ? { callName: payload.callName }
-        : {}),
+      ...(callName?.trim() ? { callName } : {}),
       namePromptShown: true,
     });
     deps.rebuildProvider();
@@ -171,32 +301,32 @@ export function registerIpc(deps: IpcDeps): void {
     return store.get();
   });
 
-  ipcMain.handle(CH.LOOK_NOW, () => deps.scheduler.lookNow());
-  ipcMain.handle(CH.SET_CLICK_THROUGH, (_e, enabled: boolean) =>
+  secureHandle(CH.LOOK_NOW, () => deps.scheduler.lookNow());
+  secureHandle(CH.SET_CLICK_THROUGH, (_e, enabled: boolean) =>
     void deps.applySettings({ clickThrough: !!enabled }),
   );
-  ipcMain.handle(CH.OPEN_SETTINGS, () => {
+  secureHandle(CH.OPEN_SETTINGS, () => {
     showSettingsWindow();
   });
-  ipcMain.handle(CH.OPEN_LAB, () => {
+  secureHandle(CH.OPEN_LAB, () => {
     showLabWindow();
   });
-  ipcMain.handle(CH.FOCUS_GET, () => deps.focus.get());
-  ipcMain.handle(CH.FOCUS_START, (_e, minutes: number) => {
+  secureHandle(CH.FOCUS_GET, () => deps.focus.get());
+  secureHandle(CH.FOCUS_START, (_e, minutes: number) => {
     const state = deps.focus.start(minutes);
     deps.emitReply(focusStartedReply(state.durationMinutes));
     return state;
   });
-  ipcMain.handle(CH.FOCUS_CANCEL, () => {
+  secureHandle(CH.FOCUS_CANCEL, () => {
     const wasActive = deps.focus.isActive();
     const state = deps.focus.cancel();
     if (wasActive) deps.emitReply(focusCancelledReply());
     return state;
   });
-  ipcMain.handle(CH.FIST_BUMP, () => deps.fistBump());
-  ipcMain.handle(CH.MEMORY_GET, () => memory.get());
-  ipcMain.handle(CH.MEMORY_RESET, () => memory.reset());
-  ipcMain.handle(CH.ENGINEERING_SOLVE, (_e, request: EngineeringRequest) => {
+  secureHandle(CH.FIST_BUMP, () => deps.fistBump());
+  secureHandle(CH.MEMORY_GET, () => memory.get());
+  secureHandle(CH.MEMORY_RESET, () => memory.reset());
+  secureHandle(CH.ENGINEERING_SOLVE, (_e, request: EngineeringRequest) => {
     const result = solveEngineering(request);
     if (result.ok) {
       memory.recordCalculation();
@@ -204,31 +334,41 @@ export function registerIpc(deps: IpcDeps): void {
     }
     return result;
   });
-  ipcMain.handle(CH.UPDATE_OPEN, () => deps.openUpdate());
-  ipcMain.handle(CH.UPDATE_DISMISS, () => deps.dismissUpdate());
+  secureHandle(CH.UPDATE_OPEN, () => deps.openUpdate());
+  secureHandle(CH.UPDATE_DISMISS, () => deps.dismissUpdate());
 
   // ── notes + voice input (Stage 1) ─────────────────────────────────────────
-  ipcMain.handle(CH.MIC_PERMISSION_CHECK, () => getMicPermission());
-  ipcMain.handle(CH.MIC_PERMISSION_REQUEST, () => requestMicPermission());
-  ipcMain.handle(CH.SPEECH_SETUP_CHECK, async () => {
+  secureHandle(CH.MIC_PERMISSION_CHECK, () => getMicPermission());
+  secureHandle(CH.MIC_PERMISSION_REQUEST, () => requestMicPermission());
+  secureHandle(CH.SPEECH_SETUP_CHECK, async () => {
     const s = store.get();
     const provider = createSpeechProvider(s);
     const readiness = await provider.ready();
     return { ok: readiness.ok, provider: provider.kind, error: readiness.error };
   });
-  ipcMain.handle(CH.PTT_TOGGLE, () => deps.voiceNotes.toggle());
-  ipcMain.handle(CH.VOICE_NOTE_SUBMIT, (_e, wavBase64: string) =>
-    deps.voiceNotes.submit(typeof wavBase64 === 'string' ? wavBase64 : ''),
+  secureHandle(CH.PTT_TOGGLE, () => deps.voiceNotes.toggle());
+  secureHandle(CH.VOICE_NOTE_SUBMIT, (_e, wavBase64: string, sessionId?: number) =>
+    deps.voiceNotes.submit(
+      typeof wavBase64 === 'string' ? wavBase64 : '',
+      typeof sessionId === 'number' && Number.isInteger(sessionId) && sessionId > 0 ? sessionId : undefined,
+    ),
   );
-  ipcMain.on(CH.VOICE_NOTE_CANCEL, (_e, reason?: string) =>
-    deps.voiceNotes.cancel(typeof reason === 'string' ? reason : undefined),
-  );
-  ipcMain.handle(CH.VOICE_TRANSCRIBE, (_e, wavBase64: string) =>
+  ipcMain.on(CH.VOICE_NOTE_CANCEL, (event, reason?: string, sessionId?: number) => {
+    authorizeSender(event.sender, CH.VOICE_NOTE_CANCEL);
+    deps.voiceNotes.cancel(
+      typeof reason === 'string' ? reason : undefined,
+      typeof sessionId === 'number' && Number.isInteger(sessionId) && sessionId > 0 ? sessionId : undefined,
+    );
+  });
+  secureHandle(CH.VOICE_TRANSCRIBE, (_e, wavBase64: string) =>
     deps.voiceNotes.transcribe(typeof wavBase64 === 'string' ? wavBase64 : ''),
   );
-  ipcMain.handle(CH.NOTES_LIST, () => notes.list());
-  ipcMain.handle(CH.NOTES_ADD, (_e, text: string) => {
-    const note = notes.add(typeof text === 'string' ? text : '', 'chat');
+  secureHandle(CH.NOTES_LIST, (_e, workspaceId?: string) =>
+    notes.list(typeof workspaceId === 'string' && workspaces.exists(workspaceId) ? workspaceId : undefined),
+  );
+  secureHandle(CH.NOTES_ADD, (_e, text: string, workspaceId?: string) => {
+    const target = typeof workspaceId === 'string' && workspaces.exists(workspaceId) ? workspaceId : undefined;
+    const note = notes.add(typeof text === 'string' ? text : '', 'chat', target);
     if (!note) return { ok: false, error: 'Nothing to keep.' };
     deps.broadcastNoteSaved(note);
     // Embedding + topic tags in the background; retrieval falls back to
@@ -236,21 +376,95 @@ export function registerIpc(deps: IpcDeps): void {
     deps.voiceNotes.enrichInBackground(note);
     return { ok: true, note };
   });
-  ipcMain.handle(CH.NOTES_DELETE, (_e, id: string) => {
+  secureHandle(CH.NOTES_DELETE, (_e, id: string) => {
     if (typeof id === 'string') notes.delete(id);
   });
-  ipcMain.handle(CH.NOTES_CLEAR, () => notes.clear());
-  ipcMain.handle(CH.CHAT_SEND, async (e, messages: ChatMessage[]) => {
+  secureHandle(CH.NOTES_CLEAR, () => notes.clear());
+  secureHandle(CH.NOTES_MOVE, (_e, args: { id?: unknown; workspaceId?: unknown }) => {
+    if (
+      args && typeof args.id === 'string' && typeof args.workspaceId === 'string' &&
+      workspaces.exists(args.workspaceId)
+    ) notes.moveToWorkspace(args.id, args.workspaceId);
+  });
+  secureHandle(CH.WORKSPACES_LIST, () => workspaces.list());
+  secureHandle(CH.WORKSPACES_ADD, (_e, name: unknown) =>
+    workspaces.add(typeof name === 'string' ? name : ''),
+  );
+  secureHandle(CH.WORKSPACES_DELETE, (_e, id: unknown) => {
+    if (typeof id !== 'string' || !workspaces.delete(id)) return false;
+    notes.reassignWorkspace(id);
+    tasks.reassignWorkspace(id);
+    researchArtifacts.reassignWorkspace(id);
+    return true;
+  });
+  secureHandle(CH.TASKS_LIST, (_e, workspaceId?: string) =>
+    tasks.list(typeof workspaceId === 'string' && workspaces.exists(workspaceId) ? workspaceId : undefined),
+  );
+  secureHandle(CH.TASKS_ADD, (_e, input: unknown) => {
+    if (!input || typeof input !== 'object') return null;
+    const raw = input as Record<string, unknown>;
+    const workspaceId = typeof raw.workspaceId === 'string' && workspaces.exists(raw.workspaceId)
+      ? raw.workspaceId : undefined;
+    return tasks.add({
+      title: typeof raw.title === 'string' ? raw.title : '',
+      workspaceId,
+      dueAt: typeof raw.dueAt === 'string' ? raw.dueAt : undefined,
+      remindAt: typeof raw.remindAt === 'string' ? raw.remindAt : undefined,
+    });
+  });
+  secureHandle(CH.TASKS_COMPLETE, (_e, args: unknown) => {
+    if (!args || typeof args !== 'object') return;
+    const raw = args as Record<string, unknown>;
+    if (typeof raw.id === 'string') tasks.complete(raw.id, raw.completed === true);
+  });
+  secureHandle(CH.TASKS_DELETE, (_e, id: unknown) => {
+    if (typeof id === 'string') tasks.delete(id);
+  });
+  secureHandle(CH.RESEARCH_ARTIFACTS_LIST, (_e, workspaceId?: string) =>
+    researchArtifacts.list(
+      typeof workspaceId === 'string' && workspaces.exists(workspaceId) ? workspaceId : undefined,
+    ),
+  );
+  secureHandle(CH.RESEARCH_ARTIFACTS_DELETE, (_e, id: unknown) => {
+    if (typeof id === 'string') researchArtifacts.delete(id);
+  });
+  secureHandle(CH.CHAT_SEND, async (
+    e,
+    messages: ChatMessage[],
+    workspaceId?: string,
+    rawRequestId?: string,
+  ) => {
+    const requestId = typeof rawRequestId === 'string' ? rawRequestId.slice(0, 80) : '';
     const history = Array.isArray(messages) ? messages : [];
+    const targetWorkspace =
+      typeof workspaceId === 'string' && workspaces.exists(workspaceId)
+        ? workspaceId
+        : INBOX_WORKSPACE_ID;
     // Progress lines target only the asking window (not a broadcast).
     const onProgress = (line: string) => {
       if (!e.sender.isDestroyed()) e.sender.send(EV.CHAT_PROGRESS, { line });
     };
-    let result = await chatWithRocky(history, store.get(), onProgress);
+    const onToken = requestId
+      ? (delta: string) => {
+          if (!e.sender.isDestroyed() && delta) e.sender.send(EV.CHAT_TOKEN, { requestId, delta });
+        }
+      : undefined;
+    let result = await chatWithRocky(
+      history,
+      store.get(),
+      onProgress,
+      targetWorkspace,
+      onToken,
+    );
     // The model routed this turn into a research task (start_research tool):
     // kick off the detached run and answer with the in-persona ack instead.
     if (result.ok && result.startResearch) {
-      const start = startDetachedResearch(result.startResearch, deps.emitReply, onProgress);
+      const start = startDetachedResearch(
+        result.startResearch,
+        deps.emitReply,
+        onProgress,
+        targetWorkspace,
+      );
       const name = store.get().callName;
       result = start.started
         ? { ...result, reply: researchAckReply(name).line }
@@ -263,15 +477,42 @@ export function registerIpc(deps: IpcDeps): void {
     // Persist the turn on success so the transcript survives window close.
     if (result.ok && result.reply) {
       const latestUser = [...history].reverse().find((m) => m && m.role === 'user');
-      if (latestUser) chatHistory.append({ role: 'user', text: latestUser.text });
-      chatHistory.append({ role: 'rocky', text: result.reply });
+      if (latestUser) chatHistory.append({
+        role: 'user', text: latestUser.text, kind: 'chat', workspaceId: targetWorkspace,
+      });
+      chatHistory.append({
+        role: 'rocky', text: result.reply, sources: result.sources, kind: 'chat', workspaceId: targetWorkspace,
+      });
     }
     return result;
   });
-  ipcMain.handle(CH.CHAT_REFLECT, (_e, kind: ReflectionKind) =>
-    reflectOnNotes(kind, store.get()),
-  );
-  ipcMain.handle(CH.OPEN_CHAT, (_e, reflect?: ReflectionKind) => {
+  secureHandle(CH.CHAT_CANCEL, () => cancelChatRequests());
+  secureHandle(CH.CHAT_REFLECT, async (_e, kind: ReflectionKind, workspaceId?: string) => {
+    const targetWorkspace =
+      typeof workspaceId === 'string' && workspaces.exists(workspaceId)
+        ? workspaceId
+        : INBOX_WORKSPACE_ID;
+    const safeKind: ReflectionKind =
+      kind === 'connections' || kind === 'questions' || kind === 'weekly' ? kind : 'summarize';
+    const labels: Record<ReflectionKind, string> = {
+      summarize: 'Summarize my notes',
+      connections: 'Find connections',
+      questions: 'Questions for me',
+      weekly: 'Weekly reflection',
+    };
+    const result = await reflectOnNotes(safeKind, store.get(), targetWorkspace);
+    if (result.ok && result.reply) {
+      chatHistory.appendTurn(
+        { role: 'user', text: labels[safeKind], kind: 'reflection', workspaceId: targetWorkspace },
+        {
+          role: 'rocky', text: result.reply, sources: result.sources,
+          kind: 'reflection', workspaceId: targetWorkspace,
+        },
+      );
+    }
+    return result;
+  });
+  secureHandle(CH.OPEN_CHAT, (_e, reflect?: ReflectionKind) => {
     showChatWindow();
     if (
       reflect === 'summarize' ||
@@ -284,15 +525,19 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // ── chat history, research, decisions, external links (Stage 2) ────────────
-  ipcMain.handle(CH.CHAT_HISTORY_GET, () => chatHistory.list());
-  ipcMain.handle(CH.CHAT_HISTORY_CLEAR, () => chatHistory.clear());
+  secureHandle(CH.CHAT_HISTORY_GET, (_e, workspaceId?: string) =>
+    chatHistory.list(typeof workspaceId === 'string' ? workspaceId : undefined),
+  );
+  secureHandle(CH.CHAT_HISTORY_CLEAR, (_e, workspaceId?: string) =>
+    chatHistory.clear(typeof workspaceId === 'string' ? workspaceId : undefined),
+  );
 
   // Research is fire-and-forget: the handler resolves as soon as the task is
   // accepted, chat stays usable, and the finished report comes back later as a
   // broadcast (the asking window may be closed by then) plus a companion
   // bubble whose line Rocky speaks — the JARVIS loop. The runner itself lives
   // in researchTask.ts, shared with the push-to-talk voice route.
-  ipcMain.handle(CH.RESEARCH_START, (e, rawTopic: string) => {
+  secureHandle(CH.RESEARCH_START, (e, rawTopic: string, workspaceId?: string) => {
     const onProgress = (line: string) => {
       if (!e.sender.isDestroyed()) e.sender.send(EV.CHAT_PROGRESS, { line });
     };
@@ -300,14 +545,15 @@ export function registerIpc(deps: IpcDeps): void {
       typeof rawTopic === 'string' ? rawTopic : '',
       deps.emitReply,
       onProgress,
+      typeof workspaceId === 'string' && workspaces.exists(workspaceId) ? workspaceId : undefined,
     );
   });
-  ipcMain.handle(CH.RESEARCH_CANCEL, () => research.cancel());
+  secureHandle(CH.RESEARCH_CANCEL, () => research.cancel());
 
-  ipcMain.handle(CH.DECISION_DISTILL, (_e, messages: ChatMessage[]) =>
+  secureHandle(CH.DECISION_DISTILL, (_e, messages: ChatMessage[]) =>
     distillDecision(Array.isArray(messages) ? messages : [], store.get()),
   );
-  ipcMain.handle(CH.DECISION_LOG, (_e, draft: DecisionDraft) => {
+  secureHandle(CH.DECISION_LOG, (_e, draft: DecisionDraft) => {
     if (!draft || typeof draft.decision !== 'string') return null;
     return decisions.add({
       decision: draft.decision,
@@ -315,17 +561,17 @@ export function registerIpc(deps: IpcDeps): void {
       expectedOutcome: typeof draft.expectedOutcome === 'string' ? draft.expectedOutcome : '',
     });
   });
-  ipcMain.handle(CH.DECISION_LIST, () => decisions.list());
-  ipcMain.handle(CH.DECISION_RESOLVE, (_e, args: { id: string; resolution: string }) => {
+  secureHandle(CH.DECISION_LIST, () => decisions.list());
+  secureHandle(CH.DECISION_RESOLVE, (_e, args: { id: string; resolution: string }) => {
     if (args && typeof args.id === 'string') {
       decisions.resolve(args.id, typeof args.resolution === 'string' ? args.resolution : '');
     }
   });
-  ipcMain.handle(CH.DECISION_DELETE, (_e, id: string) => {
+  secureHandle(CH.DECISION_DELETE, (_e, id: string) => {
     if (typeof id === 'string') decisions.delete(id);
   });
 
-  ipcMain.handle(CH.OPEN_EXTERNAL, (_e, url: string) => {
+  secureHandle(CH.OPEN_EXTERNAL, (_e, url: string) => {
     // http/https only — never file:, javascript:, etc.
     try {
       const parsed = new URL(typeof url === 'string' ? url : '');
@@ -337,16 +583,18 @@ export function registerIpc(deps: IpcDeps): void {
     }
   });
 
-  ipcMain.handle(CH.QUIT, () => {
+  secureHandle(CH.QUIT, () => {
     // Imported lazily to avoid a cycle; app is always available at runtime.
     deps.farewellAndQuit();
   });
 
   // ── fire-and-forget (renderer → main) ─────────────────────────────────────
-  ipcMain.on(CH.DISMISS_BUBBLE, () => {
+  ipcMain.on(CH.DISMISS_BUBBLE, (event) => {
+    authorizeSender(event.sender, CH.DISMISS_BUBBLE);
     /* bubble dismissal is renderer-local; nothing to do in main */
   });
   ipcMain.on(CH.CLOSE_WINDOW, (e) => {
+    authorizeSender(e.sender, CH.CLOSE_WINDOW);
     BrowserWindow.fromWebContents(e.sender)?.close();
   });
   // Manual window drag: the companion canvas is a no-drag region (so clicking
@@ -355,6 +603,8 @@ export function registerIpc(deps: IpcDeps): void {
   // repositions absolutely from that anchor, so dropped messages never drift.
   let dragAnchor: { x: number; y: number } | null = null;
   ipcMain.on(CH.WINDOW_DRAG, (e, payload: { phase: 'start' | 'move'; dx?: number; dy?: number }) => {
+    const role = authorizeSender(e.sender, CH.WINDOW_DRAG);
+    if (role !== 'companion') return;
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return;
     if (payload?.phase === 'start') {

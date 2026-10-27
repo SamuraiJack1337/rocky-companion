@@ -213,7 +213,12 @@
       .decision .decision-text { font-weight: 600; }
       .decision .decision-meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
       .note-add { display: flex; gap: 8px; margin: 10px 0; }
-      #note-input {
+      .note-add select {
+        background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+        color: var(--text); flex: 1; font: inherit; padding: 8px 10px;
+      }
+      .hint { color: var(--muted); font-size: 10.5px; }
+      #note-input, #task-input, #task-reminder {
         background: var(--panel-2);
         border: 1px solid var(--border);
         border-radius: 10px;
@@ -292,11 +297,31 @@
         <button type="button" id="save-note" title="Save the box as a note instead of sending">+ Note</button>
         <button type="button" id="research" title="Research the box on the web">Research</button>
         <button type="button" id="send">Send</button>
+        <button type="button" id="cancel-chat-turn" hidden>Cancel</button>
       </div>
       <div class="status" id="talk-status" aria-live="polite"></div>
     </section>
 
     <section class="panel" id="notebook-panel" role="tabpanel" aria-labelledby="notebook-tab" hidden>
+      <div class="note-add" style="margin-top: 0">
+        <select id="workspace-select" aria-label="Active project"></select>
+        <button type="button" id="add-workspace">+ Project</button>
+        <button type="button" id="delete-workspace">Delete project</button>
+      </div>
+      <div class="hint" style="margin: -4px 0 10px">Chat retrieval and new notes use the selected project. Inbox holds unassigned and legacy notes.</div>
+      <div id="tasks-section">
+        <p class="section-label">Tasks &amp; reminders</p>
+        <div id="tasks-list"></div>
+        <div class="note-add">
+          <input id="task-input" type="text" maxlength="500" placeholder="Add a task…" />
+          <input id="task-reminder" type="datetime-local" title="Optional reminder time" />
+          <button type="button" id="add-task">Add task</button>
+        </div>
+      </div>
+      <div id="research-artifacts-section" hidden>
+        <p class="section-label">Research</p>
+        <div id="research-artifacts-list"></div>
+      </div>
       <div id="decisions-section" hidden>
         <p class="section-label">Decisions</p>
         <div id="decisions-list"></div>

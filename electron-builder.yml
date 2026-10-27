@@ -63,9 +63,9 @@ mac:
     # Microphone: push-to-talk voice notes only. The mic is live only between
     # your two presses of the talk key; audio is transcribed and discarded.
     NSMicrophoneUsageDescription: >-
-      Rocky listens only while you hold a voice note (press the talk key to
-      start and stop). The recording is transcribed into your local notebook
-      and the audio is then discarded — it is never stored.
+      Rocky listens only while you use push-to-talk. The recording is transcribed
+      into your local notebook and is not retained; local whisper.cpp may use a
+      temporary owner-only audio file that is removed after transcription.
     # Hide from the Dock — Rocky lives in the menu bar and floats on screen.
     LSUIElement: true
 

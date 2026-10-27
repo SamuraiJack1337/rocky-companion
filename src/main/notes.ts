@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { NoteSource, NoteView } from '../shared/types';
-import { NOTE_MAX_LENGTH } from '../shared/types';
+import { NOTE_MAX_LENGTH, INBOX_WORKSPACE_ID } from '../shared/types';
 import { rankNotes } from '../shared/notesSearch';
 
 /** The persisted note shape (NoteView + private retrieval fields). */
@@ -40,6 +40,7 @@ function toView(note: StoredNote): NoteView {
     createdAt: note.createdAt,
     text: note.text,
     source: note.source,
+    workspaceId: note.workspaceId || INBOX_WORKSPACE_ID,
     ...(note.topics && note.topics.length > 0 ? { topics: [...note.topics] } : {}),
   };
 }
@@ -86,7 +87,7 @@ class NotesStore {
   }
 
   /** Save a new note. Returns null when the text is empty after cleanup. */
-  add(text: string, source: NoteSource): NoteView | null {
+  add(text: string, source: NoteSource, workspaceId = INBOX_WORKSPACE_ID): NoteView | null {
     const clean = normalizeNoteText(text);
     if (!clean) return null;
     const notes = this.load();
@@ -95,6 +96,7 @@ class NotesStore {
       createdAt: new Date().toISOString(),
       text: clean,
       source,
+      workspaceId: workspaceId || INBOX_WORKSPACE_ID,
     };
     notes.push(note);
     this.save();
@@ -124,16 +126,17 @@ class NotesStore {
     return note ? toView(note) : null;
   }
 
-  /** All notes, newest first, embeddings stripped. */
-  list(): NoteView[] {
+  /** All notes, newest first, optionally scoped to one workspace. */
+  list(workspaceId?: string): NoteView[] {
     return this.load()
+      .filter((note) => !workspaceId || (note.workspaceId || INBOX_WORKSPACE_ID) === workspaceId)
       .map(toView)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   /** Newest first, capped, optionally only notes since a given time. */
-  recent(limit: number, sinceISO?: string): NoteView[] {
-    let notes = this.list();
+  recent(limit: number, sinceISO?: string, workspaceId?: string): NoteView[] {
+    let notes = this.list(workspaceId);
     if (sinceISO) notes = notes.filter((n) => n.createdAt >= sinceISO);
     return notes.slice(0, Math.max(0, limit));
   }
@@ -155,13 +158,38 @@ class NotesStore {
     this.save();
   }
 
+  moveToWorkspace(id: string, workspaceId: string): void {
+    const note = this.load().find((item) => item.id === id);
+    if (!note) return;
+    note.workspaceId = workspaceId || INBOX_WORKSPACE_ID;
+    this.save();
+  }
+
+  reassignWorkspace(fromId: string, toId = INBOX_WORKSPACE_ID): void {
+    let changed = false;
+    for (const note of this.load()) {
+      if ((note.workspaceId || INBOX_WORKSPACE_ID) === fromId) {
+        note.workspaceId = toId;
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+  }
+
   /**
    * Retrieve the notes most relevant to a query, best first. Cosine over
    * embeddings when a query embedding is supplied; keyword overlap otherwise
    * (see shared/notesSearch).
    */
-  search(query: string, queryEmbedding: number[] | null, topK: number): NoteView[] {
-    const notes = this.load();
+  search(
+    query: string,
+    queryEmbedding: number[] | null,
+    topK: number,
+    workspaceId?: string,
+  ): NoteView[] {
+    const notes = this.load().filter(
+      (note) => !workspaceId || (note.workspaceId || INBOX_WORKSPACE_ID) === workspaceId,
+    );
     const ranked = rankNotes(query, notes, queryEmbedding, topK);
     const byId = new Map(notes.map((n) => [n.id, n]));
     return ranked

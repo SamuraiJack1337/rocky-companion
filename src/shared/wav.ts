@@ -71,3 +71,49 @@ export function bytesToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
+/**
+ * Validate a renderer-produced WAV before it crosses the IPC boundary.
+ * This is intentionally structural rather than content-aware: transcription
+ * remains the provider's job, while malformed or oversized payloads are
+ * rejected before they can reach a CLI or cloud SDK.
+ */
+export function isPlausibleWavBase64(value: unknown, maxBytes = 8 * 1024 * 1024): boolean {
+  if (typeof value !== 'string' || value.length === 0 || value.length > Math.ceil(maxBytes * 4 / 3) + 16) {
+    return false;
+  }
+  try {
+    const decoded = atob(value);
+    if (decoded.length < 44 || decoded.length > maxBytes) return false;
+    const bytes = Uint8Array.from(decoded, (char) => char.charCodeAt(0));
+    const ascii = (offset: number, length: number): string =>
+      String.fromCharCode(...bytes.subarray(offset, offset + length));
+    if (ascii(0, 4) !== 'RIFF' || ascii(8, 4) !== 'WAVE') return false;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const riffSize = view.getUint32(4, true);
+    if (riffSize < 36 || riffSize > bytes.length - 8) return false;
+
+    let sawFmt = false;
+    let sawData = false;
+    let offset = 12;
+    while (offset + 8 <= bytes.length) {
+      const id = ascii(offset, 4);
+      const size = view.getUint32(offset + 4, true);
+      const end = offset + 8 + size;
+      if (end > bytes.length) return false;
+      if (id === 'fmt ' && size >= 16) {
+        const format = view.getUint16(offset + 8, true);
+        const channels = view.getUint16(offset + 10, true);
+        const sampleRate = view.getUint32(offset + 12, true);
+        const bits = view.getUint16(offset + 22, true);
+        sawFmt = format === 1 && channels === 1 && sampleRate >= 8000 && sampleRate <= 48000 && bits === 16;
+      } else if (id === 'data' && size > 0) {
+        sawData = true;
+      }
+      offset = end + (size % 2);
+    }
+    return sawFmt && sawData;
+  } catch {
+    return false;
+  }
+}

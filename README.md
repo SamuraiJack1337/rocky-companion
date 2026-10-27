@@ -40,7 +40,8 @@ Rocky is an [Electron](https://www.electronjs.org/) + TypeScript desktop compani
 - **Rights-controlled.** The MIT license covers the software implementation only; Project Hail Mary
   characters, names, likenesses, and other underlying IP are not relicensed.
 - **macOS-first, Windows included.** macOS is the primary target; each release
-  also ships an unsigned Windows installer with the same feature set.
+  also ships an unsigned Windows installer with the same core feature set and
+  platform-specific permission/foreground-app behavior.
 
 ---
 
@@ -73,8 +74,10 @@ Hard guarantees that hold for **both** providers:
   activity category such as `coding`, `meeting`, `idle`, or `sensitive`, plus
   mood and a sensitivity flag. In Classic style any extra model output is
   discarded before character dialogue is generated; in Realistic style only a
-  single sanitized, length-clamped remark passes through — and never for
-  sensitive screens.
+  single whitespace-normalized, length-clamped remark passes through — and is
+  removed whenever the model classifies the screen as sensitive. Because
+  Realistic sensitivity is model-classified rather than a perfect local secret
+  detector, use Classic mode for the strictest dialogue boundary.
 - **Local really means loopback.** Ollama hosts are restricted to `localhost`,
   `127.0.0.1`, or `::1`. A remote endpoint cannot be silently configured as the
   local provider.
@@ -132,8 +135,9 @@ app. Expect up to three one-time prompts after an update:
    your stored API key. Nothing leaves your machine.
 
 Rocky checks the Releases page about once a day and offers new versions in a
-speech bubble (you can turn this off in Settings — it is the app's only
-network call besides your chosen vision provider).
+speech bubble (you can turn this off in Settings). Other network calls happen
+only for capabilities you explicitly enable: cloud vision/STT/chat/embeddings/TTS
+and consent-gated web search or research.
 
 Everything below is for running from source.
 
@@ -172,7 +176,8 @@ npm run dev
 
 > `.env` is **git-ignored** — your key never gets committed. Copying it from
 > `.env.example` is optional; you can instead enter the key in **Settings**, where
-> it is stored encrypted in your macOS Keychain.
+> it is stored encrypted through Electron `safeStorage` using the operating
+> system's protected credential storage.
 
 On first launch Rocky shows a consent screen. Pick your provider and, for Cloud,
 explicitly opt in to sending screenshots to OpenAI. The default selection is
@@ -223,9 +228,9 @@ If you prefer a hosted model, you can use OpenAI with **your own** key.
 1. Create an API key in the [OpenAI dashboard](https://platform.openai.com/api-keys).
 2. Provide the key in **one** of two ways:
    - **Settings (recommended):** open Rocky's Settings and paste the key. It is
-     validated with a tiny test call, then **stored encrypted in the macOS
-     Keychain via Electron `safeStorage`** — never in the repo, never in plain
-     text, never logged.
+     validated with a tiny test call, then **stored encrypted through Electron
+     `safeStorage` using the operating system's credential protection** — never
+     in the repo, never in plain text, never logged.
    - **`.env` file:** copy `.env.example` to `.env` and set:
 
      ```ini
@@ -318,8 +323,9 @@ Only the locally generated translation text is transmitted; screenshots are not.
 
 ### Creature skins (drop-in art)
 
-The creature is drawn **procedurally** by default (no assets). You can swap in
-your own art — a sprite sheet or per-mood stills — without touching code:
+Fresh installs use the bundled official skin, with the procedural creature as a
+no-asset fallback. You can swap in your own art — a sprite sheet or per-mood
+stills — without touching code:
 
 1. **Settings → Creature → Open skins folder** (this is `skins/` under the app's
    `userData` directory).
@@ -369,7 +375,9 @@ can talk with him about your own notes.
   (voice note)** in his quick-controls popover. Rocky transcribes the recording
   into his notebook and confirms out loud with a snippet, so a mishearing is
   immediately visible. The microphone is live only between your two presses;
-  audio is transcribed **in memory and discarded** (never stored).
+  audio is never retained. The cloud path stays in memory; local whisper.cpp
+  uses a transient owner-only WAV file that is deleted immediately after the
+  transcription attempt (a hard crash can leave a recoverable temp file).
 - **Notebook.** Notes live in a local, owner-only file
   (`notes.json` under the app's user folder). Open **Notes & chat…** from the
   tray (or Rocky's popover) to read, add, or delete them — including **Delete
@@ -381,8 +389,22 @@ can talk with him about your own notes.
   when available, keyword search otherwise), in Rocky's voice. Reflection
   buttons ask for a summary, cross-note connections, follow-up questions, or a
   weekly reflection — also reachable from Rocky's popover and the tray's
-  **Reflect** submenu. Conversations are **in-memory only** — closing the
-  window forgets the chat; only notes persist.
+  **Reflect** submenu. Conversations are stored locally in an owner-only
+  `chat-history.json` file so they survive closing the window; **Clear chat**
+  deletes that transcript. Reflections and research citations are preserved
+  consistently with ordinary turns.
+- **Projects, tasks, and reminders.** Organize notes into explicit local projects
+  (legacy and unassigned notes live in Inbox), scope retrieval to the selected
+  project, move notes between projects, and keep project-linked tasks. Optional
+  reminder timestamps are checked locally and announced by Rocky; tasks can be
+  completed, reopened, or deleted from the notebook.
+- **Durable research artifacts.** Background research has a first-class local
+  record with running/completed/failed/cancelled state, report, digest, citations,
+  and project association. Reports and sources survive closing the chat and can
+  be discussed or deleted from the notebook.
+- **Streaming conversation.** Ollama and OpenAI answers stream into the chat with
+  request IDs and cancellation. The completed answer is reconciled once and only
+  the final turn is persisted.
 - **Weekly reflection nudge.** On Friday afternoons, if you captured 3+ notes
   that week, Rocky offers a weekly reflection in a speech bubble with **Reflect
   now / Later** buttons. The check is entirely local and throttled to once a
@@ -409,6 +431,17 @@ can talk with him about your own notes.
   `ollamaChatModel` (or your vision model) and embeds with `nomic-embed-text`;
   Cloud (OpenAI) is used only when you have given the notes-cloud consent —
   note **text** is exactly what gets sent, so it has its own switch.
+
+### Privacy control center and provider health
+
+Settings includes a live privacy and diagnostics section backed by the main
+process. It shows where vision, speech-to-text, notes/chat, voice, and web data
+are currently routed; counts local notes, chat messages, decisions, tasks,
+research reports, and projects; displays the user-data folder; and checks the
+configured vision, STT, chat, embedding, voice, and web capabilities. A single
+confirmed erase action removes user-authored local content and custom projects
+without deleting provider settings, the protected API key, or relationship
+counters.
 
 ### Rocky Lab
 
@@ -533,8 +566,8 @@ a passive observer.
 - **No API key in the repo** — and there never will be one. Cloud users bring
   their own.
 - **`.env` is git-ignored**; copy from `.env.example` if you want to use it.
-- **Cloud keys are stored encrypted** in the macOS Keychain via `safeStorage`,
-  and are **never logged**.
+- **Cloud keys are stored encrypted** through Electron `safeStorage` using the
+  operating system's protected credential storage, and are **never logged**.
 - **Screenshots live in memory only** — they are **never written to disk** and
   image bytes are never logged.
 - **Sensitive screens are always off-limits** — logins, banking, and private
@@ -544,11 +577,11 @@ a passive observer.
   display name.
 - **Relationship memory contains counters and timestamps only** and can be reset
   from Rocky Lab.
-- **Notes are the one thing Rocky persists that you author** — always
-  user-initiated (push-to-talk or typed), stored in a local owner-only file,
-  deletable one-by-one or all at once. Voice-note **audio is never stored**:
-  it is transcribed and discarded (the local whisper.cpp path uses a transient
-  owner-only temp file, removed immediately after).
+- **User-authored content is explicit and controllable.** Notes, confirmed
+  decisions, research reports, and chat history are stored in owner-only local
+  files and can be deleted from their corresponding surfaces. Voice-note audio
+  is never retained after normal processing: local whisper.cpp uses a transient
+  owner-only temp file and removes it immediately; cloud STT keeps it in memory.
 - **Note data never reaches a cloud without its own consent** — cloud
   speech-to-text, chat about notes, and cloud embeddings are all gated behind
   a separate notes-cloud opt-in, independent of the screenshot consent.

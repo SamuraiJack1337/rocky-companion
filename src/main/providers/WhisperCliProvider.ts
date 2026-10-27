@@ -11,6 +11,7 @@
 
 import { app } from 'electron';
 import { execFile } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ProviderKind, TranscriptionResult } from '../../shared/types';
@@ -47,6 +48,15 @@ export function probeWhisperCli(cliPath: string, modelPath: string): ProviderRea
 }
 
 let tempCounter = 0;
+const activeWhisperChildren = new Set<ChildProcess>();
+
+/** Terminate active local transcription processes during shutdown. */
+export function cancelWhisperTranscriptions(): void {
+  for (const child of activeWhisperChildren) {
+    try { child.kill('SIGKILL'); } catch { /* already exited */ }
+  }
+  activeWhisperChildren.clear();
+}
 
 export class WhisperCliProvider implements SpeechProvider {
   readonly kind: ProviderKind = 'local';
@@ -89,12 +99,13 @@ export class WhisperCliProvider implements SpeechProvider {
   /** Run whisper-cli and collect the bare transcript from stdout. */
   private run(cli: string, wavPath: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile(
+      const child = execFile(
         cli,
         // -np: no debug prints; -nt: no timestamps → stdout is just the words.
         ['-m', this.modelPath, '-f', wavPath, '-np', '-nt'],
         { timeout: TRANSCRIBE_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
         (error, stdout) => {
+          activeWhisperChildren.delete(child);
           if (error) {
             // Never include stderr/stdout in the error — keep failures generic.
             reject(new Error('whisper-cli failed'));
@@ -103,6 +114,7 @@ export class WhisperCliProvider implements SpeechProvider {
           resolve(stdout.replace(/\s+/g, ' ').trim());
         },
       );
+      activeWhisperChildren.add(child);
     });
   }
 

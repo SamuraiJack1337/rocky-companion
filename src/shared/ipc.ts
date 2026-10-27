@@ -34,6 +34,11 @@ import type {
   VoiceCaptureState,
   VoiceNoteResult,
   WebSource,
+  PrivacySummary,
+  ProviderHealth,
+  WorkspaceRecord,
+  TaskRecord,
+  ResearchArtifact,
 } from './types';
 
 /** invoke/handle channels (request → response). */
@@ -41,6 +46,9 @@ export const CH = {
   // settings
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
+  PRIVACY_SUMMARY: 'privacy:summary',
+  PRIVACY_ERASE_CONTENT: 'privacy:erase-content',
+  PROVIDER_HEALTH: 'provider:health',
   // cloud key (secret) — handled in main via safeStorage
   KEY_HAS: 'key:has-openai',
   KEY_SET: 'key:set-openai', // validates then stores
@@ -96,7 +104,18 @@ export const CH = {
   NOTES_ADD: 'notes:add',
   NOTES_DELETE: 'notes:delete',
   NOTES_CLEAR: 'notes:clear',
+  NOTES_MOVE: 'notes:move',
+  WORKSPACES_LIST: 'workspaces:list',
+  WORKSPACES_ADD: 'workspaces:add',
+  WORKSPACES_DELETE: 'workspaces:delete',
+  TASKS_LIST: 'tasks:list',
+  TASKS_ADD: 'tasks:add',
+  TASKS_COMPLETE: 'tasks:complete',
+  TASKS_DELETE: 'tasks:delete',
+  RESEARCH_ARTIFACTS_LIST: 'research:artifacts-list',
+  RESEARCH_ARTIFACTS_DELETE: 'research:artifacts-delete',
   CHAT_SEND: 'chat:send',
+  CHAT_CANCEL: 'chat:cancel',
   CHAT_REFLECT: 'chat:reflect',
   OPEN_CHAT: 'window:open-chat',
   /** Persisted chat transcript. */
@@ -136,6 +155,7 @@ export const EV = {
   CHAT_TURN: 'chat:turn', // ChatTurn
   /** A progress line during a web/tool/research turn (targets the asking window). */
   CHAT_PROGRESS: 'chat:progress', // ChatProgress
+  CHAT_TOKEN: 'chat:token', // ChatToken
   /** A research task finished (broadcast — the asking window may be long gone). */
   RESEARCH_DONE: 'research:done', // ResearchDone
 } as const;
@@ -143,6 +163,8 @@ export const EV = {
 /** Instruction pushed to the companion renderer's recorder. */
 export interface PttCommand {
   phase: 'start' | 'stop' | 'cancel';
+  /** Monotonic recording session id; stale renderer events are ignored. */
+  sessionId: number;
 }
 
 /** Something the chat window should do on arrival (from tray/bubble/popover). */
@@ -158,6 +180,11 @@ export interface ChatProgress {
   line: string;
 }
 
+export interface ChatToken {
+  requestId: string;
+  delta: string;
+}
+
 /** A complete voice turn (user + Rocky), already persisted by main. */
 export interface ChatTurn {
   user: string;
@@ -169,6 +196,8 @@ export interface ChatTurn {
 export interface ResearchDone extends ResearchResult {
   /** The topic the task was started with, for labeling the result. */
   topic: string;
+  artifactId?: string;
+  workspaceId?: string;
 }
 
 /** A newer release, ready to offer. The URL stays in main; only display data crosses. */
@@ -218,6 +247,9 @@ export interface RockyAPI {
   // ── settings ────────────────────────────────────────────────────────────
   getSettings(): Promise<Settings>;
   setSettings(patch: Partial<Settings>): Promise<Settings>;
+  getPrivacySummary(): Promise<PrivacySummary>;
+  eraseUserContent(): Promise<PrivacySummary>;
+  getProviderHealth(): Promise<ProviderHealth>;
   onSettingsUpdated(cb: (s: Settings) => void): () => void;
 
   // ── cloud key (BYOK) ──────────────────────────────────────────────────────
@@ -287,30 +319,41 @@ export interface RockyAPI {
   /** Toggle push-to-talk exactly like the global shortcut. */
   togglePushToTalk(): Promise<void>;
   /** Companion recorder → main: transcribe + save the captured WAV as a note. */
-  submitVoiceNote(wavBase64: string): Promise<VoiceNoteResult>;
+  submitVoiceNote(wavBase64: string, sessionId?: number): Promise<VoiceNoteResult>;
   /** Companion recorder → main: capture failed or was empty. */
-  cancelVoiceNote(reason?: string): void;
+  cancelVoiceNote(reason?: string, sessionId?: number): void;
   /** Transcribe audio without saving (chat window mic). */
   transcribeVoice(wavBase64: string): Promise<TranscriptionResult>;
-  listNotes(): Promise<NoteView[]>;
-  addNote(text: string): Promise<VoiceNoteResult>;
+  listNotes(workspaceId?: string): Promise<NoteView[]>;
+  addNote(text: string, workspaceId?: string): Promise<VoiceNoteResult>;
   deleteNote(id: string): Promise<void>;
   clearNotes(): Promise<void>;
+  moveNote(id: string, workspaceId: string): Promise<void>;
+  listWorkspaces(): Promise<WorkspaceRecord[]>;
+  addWorkspace(name: string): Promise<WorkspaceRecord | null>;
+  deleteWorkspace(id: string): Promise<boolean>;
+  listTasks(workspaceId?: string): Promise<TaskRecord[]>;
+  addTask(input: { title: string; workspaceId?: string; dueAt?: string; remindAt?: string }): Promise<TaskRecord | null>;
+  completeTask(id: string, completed: boolean): Promise<void>;
+  deleteTask(id: string): Promise<void>;
+  listResearchArtifacts(workspaceId?: string): Promise<ResearchArtifact[]>;
+  deleteResearchArtifact(id: string): Promise<void>;
   /** One chat turn: full visible history in, Rocky's reply out. */
-  sendChat(messages: ChatMessage[]): Promise<ChatResult>;
+  sendChat(messages: ChatMessage[], workspaceId?: string, requestId?: string): Promise<ChatResult>;
+  cancelChat(): Promise<void>;
   /** Canned reflection over recent notes (Stage 1c). */
-  reflect(kind: ReflectionKind): Promise<ChatResult>;
+  reflect(kind: ReflectionKind, workspaceId?: string): Promise<ChatResult>;
   /** Open the Notes & chat window, optionally auto-running a reflection. */
   openChat(reflect?: ReflectionKind): Promise<void>;
 
   // ── chat history, research, decisions, external links (Stage 2) ────────────
   /** The persisted transcript, oldest first. */
-  getChatHistory(): Promise<ChatMessage[]>;
+  getChatHistory(workspaceId?: string): Promise<ChatMessage[]>;
   /** Wipe the persisted transcript (file + memory). */
-  clearChatHistory(): Promise<void>;
+  clearChatHistory(workspaceId?: string): Promise<void>;
   /** Kick off a background research task; resolves immediately with whether it
    *  started. The finished report arrives later via onResearchDone. */
-  startResearch(topic: string): Promise<ResearchStart>;
+  startResearch(topic: string, workspaceId?: string): Promise<ResearchStart>;
   /** Ask the in-flight research task to stop. */
   cancelResearch(): Promise<void>;
   /** Distill the conversation into a decision draft for the user to confirm. */
@@ -330,6 +373,7 @@ export interface RockyAPI {
   onChatAction(cb: (cmd: ChatActionCommand) => void): () => void;
   onChatTurn(cb: (turn: ChatTurn) => void): () => void;
   onChatProgress(cb: (progress: ChatProgress) => void): () => void;
+  onChatToken(cb: (token: ChatToken) => void): () => void;
   onResearchDone(cb: (done: ResearchDone) => void): () => void;
   onReply(cb: (reply: RockyReply) => void): () => void;
   onCaptureIndicator(cb: () => void): () => void;

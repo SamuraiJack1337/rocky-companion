@@ -387,11 +387,8 @@ export interface Settings {
   callName: string;
   /** One-time upgrade nudge about the call-name setting has been shown. */
   namePromptShown: boolean;
-  /**
-   * Check GitHub Releases (about once a day) for a newer version. This is the
-   * app's only network call besides the chosen vision provider; it sends no
-   * data beyond the HTTP request itself and can be turned off.
-   */
+  /** Check GitHub Releases about once a day. Other network capabilities are
+   * separately consent-gated and can be disabled independently. */
   updateCheckEnabled: boolean;
   /** ISO timestamp of the last releases check (rate limiting). */
   lastUpdateCheckAt: string | null;
@@ -515,9 +512,46 @@ export interface NoteView {
   createdAt: string;
   text: string;
   source: NoteSource;
+  /** Explicit project/workspace assignment; legacy notes migrate to Inbox. */
+  workspaceId: string;
   /** 1-3 coarse topic tags, suggested by the model after save (best-effort). */
   topics?: string[];
 }
+
+export interface WorkspaceRecord {
+  id: string;
+  name: string;
+  createdAt: string;
+  builtIn?: boolean;
+}
+
+export type TaskStatus = 'open' | 'completed';
+export interface TaskRecord {
+  id: string;
+  title: string;
+  workspaceId: string;
+  createdAt: string;
+  status: TaskStatus;
+  dueAt?: string;
+  remindAt?: string;
+  notifiedAt?: string;
+  completedAt?: string;
+}
+
+export interface ResearchArtifact {
+  id: string;
+  topic: string;
+  workspaceId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  report?: string;
+  summary?: string;
+  sources?: WebSource[];
+  error?: string;
+}
+
+export const INBOX_WORKSPACE_ID = 'inbox';
 
 /** Longest note text we accept (clamped at save time). */
 export const NOTE_MAX_LENGTH = 4000;
@@ -533,6 +567,12 @@ export type ChatRole = 'user' | 'rocky';
 export interface ChatMessage {
   role: ChatRole;
   text: string;
+  /** Preserved citations for durable research/web answers. */
+  sources?: WebSource[];
+  /** Distinguishes ordinary turns from reflections and research artifacts. */
+  kind?: 'chat' | 'reflection' | 'research';
+  /** Explicit conversation project; legacy messages belong to Inbox. */
+  workspaceId?: string;
 }
 
 /** A web page Rocky searched or read while composing a reply. */
@@ -620,6 +660,41 @@ export interface RockyState {
   muted: boolean;
 }
 
+export interface PrivacySummary {
+  dataDirectory: string;
+  routes: {
+    vision: string;
+    speechToText: string;
+    notesAndChat: string;
+    voice: string;
+    web: string;
+  };
+  stored: {
+    notes: number;
+    chatMessages: number;
+    decisions: number;
+    tasks: number;
+    researchArtifacts: number;
+    workspaces: number;
+    relationshipMemory: boolean;
+  };
+}
+
+export interface ProviderComponentHealth {
+  state: 'ready' | 'degraded' | 'unavailable' | 'disabled';
+  label: string;
+  detail: string;
+}
+
+export interface ProviderHealth {
+  vision: ProviderComponentHealth;
+  speech: ProviderComponentHealth;
+  chat: ProviderComponentHealth;
+  embeddings: ProviderComponentHealth;
+  voice: ProviderComponentHealth;
+  web: ProviderComponentHealth;
+}
+
 /** Clamp an interval value into the allowed range. */
 export function clampInterval(minutes: number): number {
   if (!Number.isFinite(minutes)) return DEFAULT_SETTINGS.intervalMinutes;
@@ -647,6 +722,7 @@ export interface ResearchResult {
 /** Acknowledgment that a research task was (or wasn't) kicked off. */
 export interface ResearchStart {
   started: boolean;
+  artifactId?: string;
   /** In-character reason when not started (already running, no web consent…). */
   error?: string;
 }

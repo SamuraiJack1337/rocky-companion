@@ -148,9 +148,23 @@ export class ToneVoice {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private muted = false;
+  private readonly activeOscillators = new Set<OscillatorNode>();
 
   setMuted(muted: boolean): void {
     this.muted = muted;
+    if (muted) this.stop();
+  }
+
+  /** Stop every currently playing or future-scheduled chord. */
+  stop(): void {
+    for (const osc of this.activeOscillators) {
+      try {
+        osc.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    this.activeOscillators.clear();
   }
 
   play(motif: EridianMotif, volume = 1): number[] {
@@ -159,6 +173,8 @@ export class ToneVoice {
     if (!ctx || !this.master) return [];
     if (ctx.state === 'suspended') void ctx.resume();
 
+    this.master.gain.cancelScheduledValues(ctx.currentTime);
+    this.master.gain.setValueAtTime(0.78, ctx.currentTime);
     const phrase = MOTIFS[motif];
     const start = ctx.currentTime + 0.015;
     const level = Math.max(0, Math.min(1, volume));
@@ -229,9 +245,11 @@ export class ToneVoice {
       partial.gain.value = (index === 0 ? 0.34 : 0.16) * (0.97 + Math.random() * 0.06);
       osc.connect(partial);
       partial.connect(envelope);
+      this.activeOscillators.add(osc);
       osc.start(when);
       osc.stop(when + duration + 0.03);
       osc.onended = () => {
+        this.activeOscillators.delete(osc);
         osc.disconnect();
         partial.disconnect();
       };

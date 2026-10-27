@@ -3,7 +3,9 @@
 // reused rather than duplicated, and persists the companion's last position.
 
 import { BrowserWindow, screen, app } from 'electron';
+import type { WebContents } from 'electron';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { store } from './store';
 
 // The companion window is intentionally small. It is bigger than the creature
@@ -14,6 +16,39 @@ const EDGE_MARGIN = 24;
 
 const PRELOAD = path.join(__dirname, 'preload.js');
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
+
+export type WindowRole = 'companion' | 'consent' | 'settings' | 'lab' | 'chat';
+const windowRoles = new Map<number, WindowRole>();
+
+/** Resolve the immutable capability role assigned when a local window was created. */
+export function windowRoleFor(sender: WebContents): WindowRole | null {
+  return windowRoles.get(sender.id) ?? null;
+}
+
+/** Lock every renderer to packaged local files and deny popups/webviews. */
+function hardenWindow(win: BrowserWindow, role: WindowRole): void {
+  const id = win.webContents.id;
+  windowRoles.set(id, role);
+  const allowLocalRenderer = (url: string): boolean => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'file:') return false;
+      const relative = path.relative(RENDERER_DIR, fileURLToPath(parsed));
+      return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+    } catch {
+      return false;
+    }
+  };
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!allowLocalRenderer(url)) event.preventDefault();
+  });
+  win.webContents.on('will-redirect', (event, url) => {
+    if (!allowLocalRenderer(url)) event.preventDefault();
+  });
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  win.on('closed', () => windowRoles.delete(id));
+}
 
 let companion: BrowserWindow | null = null;
 let consent: BrowserWindow | null = null;
@@ -75,6 +110,7 @@ export function createCompanionWindow(): BrowserWindow {
       backgroundThrottling: false,
     },
   });
+  hardenWindow(companion, 'companion');
 
   companion.setAlwaysOnTop(true, 'floating');
   // Rocky should never appear in screenshots or screen shares, including his
@@ -149,6 +185,7 @@ export function showConsentWindow(): BrowserWindow {
     backgroundColor: '#1b1f27',
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  hardenWindow(consent, 'consent');
   consent.loadFile(path.join(RENDERER_DIR, 'consent.html'));
   consent.on('closed', () => {
     consent = null;
@@ -177,6 +214,7 @@ export function showSettingsWindow(): BrowserWindow {
     backgroundColor: '#1b1f27',
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  hardenWindow(settings, 'settings');
   settings.loadFile(path.join(RENDERER_DIR, 'settings.html'));
   settings.on('closed', () => {
     settings = null;
@@ -202,6 +240,7 @@ export function showLabWindow(): BrowserWindow {
     backgroundColor: '#151817',
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  hardenWindow(lab, 'lab');
   lab.loadFile(path.join(RENDERER_DIR, 'lab.html'));
   lab.on('closed', () => { lab = null; });
   return lab;
@@ -225,6 +264,7 @@ export function showChatWindow(): BrowserWindow {
     backgroundColor: '#12151c',
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  hardenWindow(chat, 'chat');
   chat.loadFile(path.join(RENDERER_DIR, 'chat.html'));
   chat.on('closed', () => { chat = null; });
   return chat;

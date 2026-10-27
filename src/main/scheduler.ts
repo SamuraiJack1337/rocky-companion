@@ -38,6 +38,9 @@ export interface SchedulerDeps {
   isFocusActive: () => boolean;
   /** Returns only the frontmost app's display name; no title or URL is requested. */
   getActiveAppName: () => Promise<string | null>;
+  /** Whether foreground detection is available on this platform. When true,
+   * configured blocklists fail closed if an app identity cannot be read. */
+  activeAppProtectionAvailable?: () => boolean;
   recordObservation: (observation: ScreenObservation) => ObservationOutcome;
   /** Seconds since the last user input (powerMonitor); used to notice idle→active wakes. */
   getIdleSeconds: () => number;
@@ -55,6 +58,8 @@ export interface ObservationOutcome {
   specialKind?: 'milestone' | 'session';
 }
 
+/** Hard ceiling for screen-source enumeration. */
+const CAPTURE_TIMEOUT_MS = 20_000;
 /** Hard ceiling for a single analyze pass so a tick can never hang forever. */
 const TICK_TIMEOUT_MS = 90_000;
 /** How many of Rocky's own recent remarks the realistic prompt gets back. */
@@ -152,6 +157,11 @@ export class Scheduler {
     this.stop();
   }
 
+  /** Drop screen-derived continuity when provider/privacy boundaries change. */
+  clearRemarkHistory(): void {
+    this.recentRemarks = [];
+  }
+
   /** Manual trigger from the tray. Always reacts (bypasses dedupe). */
   async lookNow(): Promise<void> {
     const settings = this.deps.getSettings();
@@ -184,6 +194,7 @@ export class Scheduler {
     // Strict mode restores the classic clockwork: exactly every N minutes.
     const jitter = settings.strictInterval ? 1 : JITTER_MIN + Math.random() * JITTER_SPAN;
     this.timer = setTimeout(() => {
+      if (!this.cadenceActive) return;
       void this.tick(false).finally(() => this.reschedule());
     }, minutes * 60_000 * jitter);
   }
@@ -227,6 +238,9 @@ export class Scheduler {
 
     // App stint detection: new frontmost app that has settled for a while.
     const app = await this.deps.getActiveAppName();
+    // stop()/pause may have occurred while the OS query was in flight.
+    const current = this.deps.getSettings();
+    if (!this.cadenceActive || !current.consentGiven || current.paused || this.running) return;
     let appSettled = false;
     if (app !== this.watchedApp) {
       // The very first poll after (re)start is baseline, not a change — only
@@ -264,6 +278,23 @@ export class Scheduler {
     return hour >= 1 && hour < 5;
   }
 
+  private async captureWithTimeout(controller: AbortController): Promise<CaptureResult> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let onAbort: (() => void) | null = null;
+    const timeout = new Promise<CaptureResult>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('capture timeout')), CAPTURE_TIMEOUT_MS);
+      timer.unref?.();
+      onAbort = () => reject(new Error('capture aborted'));
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([this.deps.capture(), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (onAbort) controller.signal.removeEventListener('abort', onAbort);
+    }
+  }
+
   /**
    * One capture → analyze → react cycle.
    * @param force when true (manual look), always show the reply even if similar.
@@ -281,13 +312,17 @@ export class Scheduler {
     const killTimer = setTimeout(() => controller.abort(), TICK_TIMEOUT_MS);
 
     try {
-      const activeApp = await this.deps.getActiveAppName();
-      if (isAppBlocked(activeApp, settings.blockedApps)) return;
+      let activeApp = await this.deps.getActiveAppName();
+      if (this.aborted(controller)) return;
+      const failClosed = settings.blockedApps.length > 0 && this.deps.activeAppProtectionAvailable?.() === true;
+      // A configured blocklist is a privacy boundary on supported platforms:
+      // if app detection fails, fail closed instead of capturing blindly.
+      if ((failClosed && !activeApp) || isAppBlocked(activeApp, settings.blockedApps)) return;
 
       this.lastCaptureAt = Date.now();
       let shot: CaptureResult;
       try {
-        shot = await this.deps.capture();
+        shot = await this.captureWithTimeout(controller);
       } catch {
         if (this.aborted(controller)) return;
         this.show(fallbackReply('concerned', settings.callName), force);
@@ -297,6 +332,16 @@ export class Scheduler {
       // If the user paused (or we were aborted) during capture, stop now —
       // pause must produce no output whatsoever.
       if (this.aborted(controller)) return;
+
+      // Close the foreground-app TOCTOU gap before any image can reach a model.
+      // A switch to a blocked app discards the in-memory frame immediately.
+      const confirmedApp = await this.deps.getActiveAppName();
+      if (this.aborted(controller)) return;
+      if (
+        (failClosed && !confirmedApp) ||
+        isAppBlocked(confirmedApp, settings.blockedApps)
+      ) return;
+      activeApp = confirmedApp ?? activeApp;
 
       // Confirm observation only after a frame exists. The protected companion
       // window is excluded from that frame, avoiding a self-observation loop.

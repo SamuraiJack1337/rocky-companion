@@ -491,8 +491,8 @@
           <span>Tell me about new versions</span>
         </label>
         <div class="hint">
-          Checks the GitHub Releases page about once a day. This is Rocky's only
-          network call besides your chosen vision provider; nothing about you is sent.
+          Checks GitHub Releases about once a day. Other network access occurs only for
+          cloud or web capabilities you explicitly enable; their data disclosures appear below.
         </div>
       </div>
 
@@ -524,7 +524,9 @@
           with “Company ”. Matching ignores letter case.
         </div>
         <div class="hint">
-          When a listed app is frontmost, observations are skipped before any screenshot is taken.
+          When a listed app is foreground, Rocky checks before capture and again before any
+          screenshot can reach a model. If foreground detection fails while this list is set,
+          Rocky fails closed and skips the observation.
         </div>
         <div class="status muted" id="blocked-apps-status">No apps excluded.</div>
       </div>
@@ -667,9 +669,9 @@
       <div class="hint" style="margin-bottom: 12px">
         Press the push-to-talk shortcut anywhere to speak a thought; Rocky transcribes it into
         his local notebook (<code>notes.json</code> in your user folder) and you can discuss
-        your notes in <strong>Notes &amp; chat</strong> from the tray. Notes are yours: audio
-        is transcribed and discarded, and nothing is sent to any cloud without the separate
-        consent below.
+        your notes in <strong>Notes &amp; chat</strong> from the tray. Notes and chat history are
+        local owner-only files. Voice audio is not retained after normal processing; local
+        whisper.cpp briefly uses an owner-only temp WAV. Cloud use requires the separate consent below.
       </div>
 
       <div class="field">
@@ -797,6 +799,31 @@
           tool-using model such as <code>qwen2.5</code>. Turn this off any time to keep Rocky
           notebook-only.
         </div>
+      </div>
+    </section>
+
+    <!-- ── Privacy control center ─────────────────────────────────────────── -->
+    <section class="section">
+      <h2>Privacy &amp; provider health</h2>
+      <div class="disclosure">
+        Live routes and local storage are reported by the main process. Each cloud capability has
+        its own consent above; disabling a consent stops future egress but does not delete local content.
+      </div>
+      <div class="field">
+        <label class="block">Current data routes and stored content</label>
+        <div class="status muted" id="privacy-summary">Checking…</div>
+      </div>
+      <div class="field">
+        <label class="block">Provider readiness</label>
+        <div class="status muted" id="provider-health">Checking…</div>
+      </div>
+      <div class="inline">
+        <button id="refresh-diagnostics">Refresh diagnostics</button>
+        <button id="erase-user-content">Erase notes, chat, decisions, tasks &amp; research</button>
+      </div>
+      <div class="hint">
+        Erase removes user-authored local content. Provider settings, the API key, and privacy-safe
+        relationship counters are kept unless you reset or remove them separately.
       </div>
     </section>
 

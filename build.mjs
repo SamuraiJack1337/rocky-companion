@@ -18,6 +18,12 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Node 22+ can load the optional development .env without an extra dependency.
+// Values already exported by the shell keep precedence.
+const envFile = path.join(__dirname, '.env');
+if (existsSync(envFile) && typeof process.loadEnvFile === 'function') {
+  process.loadEnvFile(envFile);
+}
 const DEV = process.argv.includes('--dev');
 const WATCH = process.argv.includes('--watch');
 

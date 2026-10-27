@@ -12,6 +12,9 @@ import { store } from './store';
 import { research } from './research';
 import { chatHistory } from './chatHistory';
 import { broadcast, showCompanionWindow } from './windows';
+import { webAllowed } from './chat';
+import { researchArtifacts } from './researchArtifacts';
+import { INBOX_WORKSPACE_ID } from '../shared/types';
 
 const noop = (): void => {};
 
@@ -25,25 +28,49 @@ export function startDetachedResearch(
   rawTopic: string,
   emitReply: (reply: RockyReply) => void,
   onProgress: (line: string) => void = noop,
+  workspaceId = INBOX_WORKSPACE_ID,
 ): ResearchStart {
   const topic = typeof rawTopic === 'string' ? rawTopic.trim() : '';
   const s = store.get();
   if (!topic) return { started: false, error: 'Give Rocky a topic to research, question?' };
+  if (!webAllowed(s)) {
+    return {
+      started: false,
+      error: renderLine('Rocky needs web access on for research, {name}. Turn it on in Settings.', {
+        name: s.callName,
+      }),
+    };
+  }
   if (research.isRunning()) {
     return {
       started: false,
       error: renderLine('Rocky is already deep in research, {name}.', { name: s.callName }),
     };
   }
+  const artifact = researchArtifacts.start(topic, workspaceId);
   void (async () => {
     const result = await research.run(topic, store.get(), onProgress);
+    researchArtifacts.finish(artifact.id, result);
     // A finished report is a Rocky turn — persist it so it lives in the
     // transcript whether or not the chat window is open right now.
     if (result.ok && result.report) {
-      chatHistory.append({ role: 'user', text: `Research: ${topic}` });
-      chatHistory.append({ role: 'rocky', text: result.report });
+      chatHistory.append({
+        role: 'user', text: `Research: ${topic}`, kind: 'research', workspaceId,
+      });
+      chatHistory.append({
+        role: 'rocky',
+        text: result.report,
+        sources: result.sources,
+        kind: 'research',
+        workspaceId,
+      });
     }
-    broadcast(EV.RESEARCH_DONE, { ...result, topic });
+    broadcast(EV.RESEARCH_DONE, {
+      ...result,
+      topic,
+      artifactId: artifact.id,
+      workspaceId,
+    });
     // Rocky comes to the user: bubble + spoken line via the companion,
     // except when they cancelled it themselves.
     if (!result.cancelled) {
@@ -61,5 +88,5 @@ export function startDetachedResearch(
       });
     }
   })();
-  return { started: true };
+  return { started: true, artifactId: artifact.id };
 }

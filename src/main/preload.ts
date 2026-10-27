@@ -9,6 +9,7 @@ import type {
   RockyAPI,
   ChatActionCommand,
   ChatProgress,
+  ChatToken,
   ChatTurn,
   ConsentPayload,
   PttCommand,
@@ -45,6 +46,11 @@ import type {
   TranscriptionResult,
   VoiceCaptureState,
   VoiceNoteResult,
+  PrivacySummary,
+  ProviderHealth,
+  WorkspaceRecord,
+  TaskRecord,
+  ResearchArtifact,
 } from '../shared/types';
 
 /** Subscribe to a push event; returns an unsubscribe function. */
@@ -62,6 +68,9 @@ const api: RockyAPI = {
   getSettings: () => ipcRenderer.invoke(CH.SETTINGS_GET) as Promise<Settings>,
   setSettings: (patch: Partial<Settings>) =>
     ipcRenderer.invoke(CH.SETTINGS_SET, patch) as Promise<Settings>,
+  getPrivacySummary: () => ipcRenderer.invoke(CH.PRIVACY_SUMMARY) as Promise<PrivacySummary>,
+  eraseUserContent: () => ipcRenderer.invoke(CH.PRIVACY_ERASE_CONTENT) as Promise<PrivacySummary>,
+  getProviderHealth: () => ipcRenderer.invoke(CH.PROVIDER_HEALTH) as Promise<ProviderHealth>,
   onSettingsUpdated: (cb: (s: Settings) => void) => subscribe<Settings>(EV.SETTINGS_UPDATED, cb),
 
   // cloud key (BYOK)
@@ -124,27 +133,47 @@ const api: RockyAPI = {
     ipcRenderer.invoke(CH.MIC_PERMISSION_REQUEST) as Promise<MicPermissionStatus>,
   checkSpeechSetup: () => ipcRenderer.invoke(CH.SPEECH_SETUP_CHECK) as Promise<SpeechSetupStatus>,
   togglePushToTalk: () => ipcRenderer.invoke(CH.PTT_TOGGLE) as Promise<void>,
-  submitVoiceNote: (wavBase64: string) =>
-    ipcRenderer.invoke(CH.VOICE_NOTE_SUBMIT, wavBase64) as Promise<VoiceNoteResult>,
-  cancelVoiceNote: (reason?: string) => ipcRenderer.send(CH.VOICE_NOTE_CANCEL, reason),
+  submitVoiceNote: (wavBase64: string, sessionId?: number) =>
+    ipcRenderer.invoke(CH.VOICE_NOTE_SUBMIT, wavBase64, sessionId) as Promise<VoiceNoteResult>,
+  cancelVoiceNote: (reason?: string, sessionId?: number) =>
+    ipcRenderer.send(CH.VOICE_NOTE_CANCEL, reason, sessionId),
   transcribeVoice: (wavBase64: string) =>
     ipcRenderer.invoke(CH.VOICE_TRANSCRIBE, wavBase64) as Promise<TranscriptionResult>,
-  listNotes: () => ipcRenderer.invoke(CH.NOTES_LIST) as Promise<NoteView[]>,
-  addNote: (text: string) => ipcRenderer.invoke(CH.NOTES_ADD, text) as Promise<VoiceNoteResult>,
+  listNotes: (workspaceId?: string) => ipcRenderer.invoke(CH.NOTES_LIST, workspaceId) as Promise<NoteView[]>,
+  addNote: (text: string, workspaceId?: string) =>
+    ipcRenderer.invoke(CH.NOTES_ADD, text, workspaceId) as Promise<VoiceNoteResult>,
   deleteNote: (id: string) => ipcRenderer.invoke(CH.NOTES_DELETE, id) as Promise<void>,
   clearNotes: () => ipcRenderer.invoke(CH.NOTES_CLEAR) as Promise<void>,
-  sendChat: (messages: ChatMessage[]) =>
-    ipcRenderer.invoke(CH.CHAT_SEND, messages) as Promise<ChatResult>,
-  reflect: (kind: ReflectionKind) =>
-    ipcRenderer.invoke(CH.CHAT_REFLECT, kind) as Promise<ChatResult>,
+  moveNote: (id: string, workspaceId: string) =>
+    ipcRenderer.invoke(CH.NOTES_MOVE, { id, workspaceId }) as Promise<void>,
+  listWorkspaces: () => ipcRenderer.invoke(CH.WORKSPACES_LIST) as Promise<WorkspaceRecord[]>,
+  addWorkspace: (name: string) =>
+    ipcRenderer.invoke(CH.WORKSPACES_ADD, name) as Promise<WorkspaceRecord | null>,
+  deleteWorkspace: (id: string) => ipcRenderer.invoke(CH.WORKSPACES_DELETE, id) as Promise<boolean>,
+  listTasks: (workspaceId?: string) => ipcRenderer.invoke(CH.TASKS_LIST, workspaceId) as Promise<TaskRecord[]>,
+  addTask: (input) => ipcRenderer.invoke(CH.TASKS_ADD, input) as Promise<TaskRecord | null>,
+  completeTask: (id: string, completed: boolean) =>
+    ipcRenderer.invoke(CH.TASKS_COMPLETE, { id, completed }) as Promise<void>,
+  deleteTask: (id: string) => ipcRenderer.invoke(CH.TASKS_DELETE, id) as Promise<void>,
+  listResearchArtifacts: (workspaceId?: string) =>
+    ipcRenderer.invoke(CH.RESEARCH_ARTIFACTS_LIST, workspaceId) as Promise<ResearchArtifact[]>,
+  deleteResearchArtifact: (id: string) =>
+    ipcRenderer.invoke(CH.RESEARCH_ARTIFACTS_DELETE, id) as Promise<void>,
+  sendChat: (messages: ChatMessage[], workspaceId?: string, requestId?: string) =>
+    ipcRenderer.invoke(CH.CHAT_SEND, messages, workspaceId, requestId) as Promise<ChatResult>,
+  cancelChat: () => ipcRenderer.invoke(CH.CHAT_CANCEL) as Promise<void>,
+  reflect: (kind: ReflectionKind, workspaceId?: string) =>
+    ipcRenderer.invoke(CH.CHAT_REFLECT, kind, workspaceId) as Promise<ChatResult>,
   openChat: (reflect?: ReflectionKind) =>
     ipcRenderer.invoke(CH.OPEN_CHAT, reflect) as Promise<void>,
 
   // chat history, research, decisions, external links (Stage 2)
-  getChatHistory: () => ipcRenderer.invoke(CH.CHAT_HISTORY_GET) as Promise<ChatMessage[]>,
-  clearChatHistory: () => ipcRenderer.invoke(CH.CHAT_HISTORY_CLEAR) as Promise<void>,
-  startResearch: (topic: string) =>
-    ipcRenderer.invoke(CH.RESEARCH_START, topic) as Promise<ResearchStart>,
+  getChatHistory: (workspaceId?: string) =>
+    ipcRenderer.invoke(CH.CHAT_HISTORY_GET, workspaceId) as Promise<ChatMessage[]>,
+  clearChatHistory: (workspaceId?: string) =>
+    ipcRenderer.invoke(CH.CHAT_HISTORY_CLEAR, workspaceId) as Promise<void>,
+  startResearch: (topic: string, workspaceId?: string) =>
+    ipcRenderer.invoke(CH.RESEARCH_START, topic, workspaceId) as Promise<ResearchStart>,
   cancelResearch: () => ipcRenderer.invoke(CH.RESEARCH_CANCEL) as Promise<void>,
   distillDecision: (messages: ChatMessage[]) =>
     ipcRenderer.invoke(CH.DECISION_DISTILL, messages) as Promise<DecisionDraftResult>,
@@ -166,6 +195,7 @@ const api: RockyAPI = {
   onChatTurn: (cb: (turn: ChatTurn) => void) => subscribe<ChatTurn>(EV.CHAT_TURN, cb),
   onChatProgress: (cb: (progress: ChatProgress) => void) =>
     subscribe<ChatProgress>(EV.CHAT_PROGRESS, cb),
+  onChatToken: (cb: (token: ChatToken) => void) => subscribe<ChatToken>(EV.CHAT_TOKEN, cb),
   onResearchDone: (cb: (done: ResearchDone) => void) =>
     subscribe<ResearchDone>(EV.RESEARCH_DONE, cb),
   onReply: (cb: (reply: RockyReply) => void) => subscribe<RockyReply>(EV.REPLY, cb),

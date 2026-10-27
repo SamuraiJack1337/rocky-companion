@@ -41,6 +41,7 @@ import { seedBundledSkins } from './assets';
 import { VoiceNotesController } from './voiceNotes';
 import { notes } from './notes';
 import { decisions } from './decisions';
+import { tasks } from './tasks';
 import { noteSnippet } from '../shared/persona';
 import { NUDGE_MIN_NOTES, shouldOfferWeeklyNudge } from './weeklyNudge';
 import { FocusManager } from './focus';
@@ -52,6 +53,7 @@ import { UpdateChecker } from './updates';
 import type { ObservationOutcome } from './scheduler';
 import type { ScreenObservation } from '../shared/types';
 import { renderLine } from '../shared/lines';
+import { cancelBackgroundWork } from './shutdown';
 import {
   composeMilestoneReply,
   composeSessionReply,
@@ -161,6 +163,7 @@ const voiceNotes = new VoiceNotesController({
  * bubble's "Reflect now" button.
  */
 function maybeOfferWeeklyReflection(): void {
+  if (farewellPending || forceQuitting) return;
   const s = store.get();
   if (!s.consentGiven) return;
   const now = new Date();
@@ -184,7 +187,25 @@ function maybeOfferWeeklyReflection(): void {
  * never nags. Marking the decision "resolved" in the notebook stops it.
  */
 let lastDecisionFollowUpAt = 0;
+function maybeOfferTaskReminder(): void {
+  if (farewellPending || forceQuitting) return;
+  const s = store.get();
+  if (!s.consentGiven || s.paused) return;
+  const task = tasks.dueReminder();
+  if (!task) return;
+  tasks.markNotified(task.id);
+  showCompanionWindow();
+  emitReply({
+    line: renderLine(`Reminder, {name}: ${noteSnippet(task.title, 140)}`, { name: s.callName }),
+    mood: 'curious',
+    activity: 'idle',
+    gesture: 'observe',
+    motif: 'question',
+  });
+}
+
 function maybeFollowUpDecision(): void {
+  if (farewellPending || forceQuitting) return;
   const s = store.get();
   if (!s.consentGiven || s.paused) return;
   if (Date.now() - lastDecisionFollowUpAt < 60 * 60_000) return;
@@ -225,6 +246,7 @@ const scheduler = new Scheduler({
   isScreenGranted: () => isScreenGranted(),
   isFocusActive: () => focus.isActive(),
   getActiveAppName: () => getFrontmostAppName(),
+  activeAppProtectionAvailable: () => process.platform === 'darwin' || process.platform === 'win32',
   recordObservation,
   getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
   peekSession: () => sessionTracker.peek(),
@@ -293,6 +315,8 @@ function farewellAndQuit(): void {
   farewellPending = true;
   scheduler.stop();
   focus.dispose();
+  voiceNotes.dispose();
+  cancelBackgroundWork();
   showCompanionWindow();
   emitReply(farewellReply(store.get().callName));
   refreshTray();
@@ -324,6 +348,15 @@ function applySettings(patch: Partial<Settings>): Settings {
     patch.ollamaHost !== undefined
   ) {
     rebuildProvider();
+  }
+  if (
+    patch.provider !== undefined ||
+    patch.cloudConsentGiven !== undefined ||
+    patch.remarkStyle !== undefined ||
+    patch.openaiModel !== undefined ||
+    patch.ollamaModel !== undefined
+  ) {
+    scheduler.clearRemarkHistory();
   }
   if (patch.pushToTalkShortcut !== undefined) applyPushToTalkShortcut();
 
@@ -489,6 +522,12 @@ if (!gotLock) {
       openUpdate,
       dismissUpdate,
       farewellAndQuit,
+      shutdown: () => {
+        scheduler.stop();
+        focus.dispose();
+        voiceNotes.dispose();
+        cancelBackgroundWork();
+      },
       voiceNotes,
       broadcastNoteSaved: (note) => broadcast(EV.NOTE_SAVED, note),
     });
@@ -507,6 +546,12 @@ if (!gotLock) {
     followUpDelay.unref();
     const followUpTimer = setInterval(() => maybeFollowUpDecision(), 30 * 60_000);
     followUpTimer.unref();
+
+    // Local task reminders: first check shortly after launch, then every minute.
+    const reminderDelay = setTimeout(() => maybeOfferTaskReminder(), 20_000);
+    reminderDelay.unref();
+    const reminderTimer = setInterval(() => maybeOfferTaskReminder(), 60_000);
+    reminderTimer.unref();
 
     const s = store.get();
     if (!s.consentGiven) {
@@ -540,5 +585,6 @@ if (!gotLock) {
     scheduler.dispose();
     focus.dispose();
     voiceNotes.dispose();
+    cancelBackgroundWork();
   });
 }

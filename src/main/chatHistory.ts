@@ -8,6 +8,7 @@ import { app } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ChatMessage } from '../shared/types';
+import { INBOX_WORKSPACE_ID } from '../shared/types';
 
 /** Cap on stored turns; oldest are trimmed. Generous for multi-day threads. */
 export const MAX_STORED_MESSAGES = 200;
@@ -29,7 +30,27 @@ export function sanitizeMessages(input: unknown): ChatMessage[] {
     if ((role !== 'user' && role !== 'rocky') || typeof text !== 'string') continue;
     const clean = text.slice(0, MESSAGE_MAX_LENGTH);
     if (!clean.trim()) continue;
-    out.push({ role, text: clean });
+    const rawSources = (m as ChatMessage).sources;
+    const sources = Array.isArray(rawSources)
+      ? rawSources
+          .filter((source) => source && typeof source.title === 'string' && typeof source.url === 'string')
+          .slice(0, 20)
+          .map((source) => ({ title: source.title.slice(0, 200), url: source.url.slice(0, 2_000) }))
+      : [];
+    const rawKind = (m as ChatMessage).kind;
+    const kind = rawKind === 'chat' || rawKind === 'reflection' || rawKind === 'research'
+      ? rawKind
+      : undefined;
+    const workspaceId = typeof (m as ChatMessage).workspaceId === 'string'
+      ? (m as ChatMessage).workspaceId!.slice(0, 100)
+      : undefined;
+    out.push({
+      role,
+      text: clean,
+      ...(sources.length ? { sources } : {}),
+      ...(kind ? { kind } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+    });
   }
   return out.slice(-MAX_STORED_MESSAGES);
 }
@@ -66,9 +87,11 @@ export class ChatHistoryStore {
     }
   }
 
-  /** The stored transcript, oldest first. */
-  list(): ChatMessage[] {
-    return [...this.load()];
+  /** The stored transcript, oldest first, optionally scoped to a workspace. */
+  list(workspaceId?: string): ChatMessage[] {
+    return this.load()
+      .filter((message) => !workspaceId || (message.workspaceId || INBOX_WORKSPACE_ID) === workspaceId)
+      .map((message) => message.sources ? { ...message, sources: [...message.sources] } : { ...message });
   }
 
   /** Append one turn (trims to the cap). Empty text is ignored. */
@@ -89,8 +112,10 @@ export class ChatHistoryStore {
     this.append(rocky);
   }
 
-  clear(): void {
-    this.current = [];
+  clear(workspaceId?: string): void {
+    this.current = workspaceId
+      ? this.load().filter((message) => (message.workspaceId || INBOX_WORKSPACE_ID) !== workspaceId)
+      : [];
     this.save();
   }
 }

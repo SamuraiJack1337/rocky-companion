@@ -8,6 +8,24 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 export async function getFrontmostAppName(): Promise<string | null> {
+  if (process.platform === 'win32') {
+    try {
+      const script = [
+        "$sig='[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();'",
+        'Add-Type -MemberDefinition $sig -Name Foreground -Namespace Rocky',
+        '$h=[Rocky.Foreground]::GetForegroundWindow()',
+        '$p=Get-Process | Where-Object {$_.MainWindowHandle -eq $h} | Select-Object -First 1',
+        'if ($p) { try { $n=$p.MainModule.FileVersionInfo.ProductName } catch { $n=$null }; if ($n) { $n } else { $p.ProcessName } }',
+      ].join('; ');
+      const front = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+        timeout: 2000,
+        windowsHide: true,
+      });
+      return front.stdout.trim().slice(0, 200) || null;
+    } catch {
+      return null;
+    }
+  }
   if (process.platform !== 'darwin') return null;
   try {
     const front = await execFileAsync('/usr/bin/lsappinfo', ['front'], { timeout: 1500 });

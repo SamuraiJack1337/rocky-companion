@@ -19,6 +19,14 @@ import { store } from './store';
 import { splitPhrases, shapePhrase } from './cadence';
 import type { TtsOverrides, TtsSegment } from '../shared/ipc';
 
+const activeSynthesis = new Set<AbortController>();
+
+/** Abort every cloud TTS request during shutdown or provider reset. */
+export function cancelCloudTts(): void {
+  for (const controller of activeSynthesis) controller.abort();
+  activeSynthesis.clear();
+}
+
 /**
  * Synthesize a line as one or more cadence segments. Returns null when no key
  * is available or synthesis fails — callers then fall back to the procedural
@@ -47,6 +55,8 @@ export async function synthesizeSpeech(
   const styled = instructions.length > 0 && /gpt/i.test(model);
 
   const phrases = cadence ? splitPhrases(clean) : [clean];
+  const controller = new AbortController();
+  activeSynthesis.add(controller);
 
   try {
     const client = new OpenAI({ apiKey: key });
@@ -67,7 +77,7 @@ export async function synthesizeSpeech(
         if (styled) params.instructions = instructions;
         if (classic && speed !== 1.0) params.speed = speed;
 
-        const response = await client.audio.speech.create(params);
+        const response = await client.audio.speech.create(params, { signal: controller.signal });
         const buffer = Buffer.from(await response.arrayBuffer());
         return { base64: buffer.toString('base64'), mime: 'audio/wav', gapMsAfter };
       }),
@@ -77,5 +87,7 @@ export async function synthesizeSpeech(
     // Generic, silent failure — never leak the key/network detail; the caller
     // gracefully degrades to the procedural tone.
     return null;
+  } finally {
+    activeSynthesis.delete(controller);
   }
 }

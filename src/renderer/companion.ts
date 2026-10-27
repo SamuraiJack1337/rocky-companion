@@ -29,6 +29,7 @@ import { SpriteSkin } from './skins';
 import type { CreatureMode, CreatureRenderer } from './skins';
 import { installControls } from './controls';
 import { VoiceRecorder } from './recorder';
+import { CompanionEventCoordinator } from './companionEventCoordinator';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -815,6 +816,10 @@ class Companion {
   private readonly system = new SystemVoice();
   /** Push-to-talk microphone capture (started/stopped by main via EV.PTT). */
   private readonly recorder = new VoiceRecorder();
+  /** Session token mirrored from main; prevents late renderer commands. */
+  private pttSessionId: number | null = null;
+  private pttStartPromise: Promise<void> | null = null;
+  private readonly events: CompanionEventCoordinator;
 
   private muted = false;
   private paused = false;
@@ -837,6 +842,11 @@ class Companion {
     this.creature = new Creature(canvas);
     this.active = this.creature;
     this.bubble = new SpeechBubble('#speech-bubble');
+    this.events = new CompanionEventCoordinator({
+      present: (reply) => this.presentReply(reply),
+      cancelAudio: () => this.cancelAudio(),
+      speak: (reply, isCurrent) => this.speakReply(reply, isCurrent),
+    });
 
     // When the bubble dismisses (auto-timeout, click, or main asking), drop the
     // talk gesture and settle into the resting mode chosen by the last mood —
@@ -1035,6 +1045,8 @@ class Companion {
     this.spoken.setMuted(muted);
     this.system.setMuted(muted);
 
+    if (muted || paused) this.events.cancel();
+
     const wasPaused = this.paused;
     this.paused = paused;
 
@@ -1056,7 +1068,7 @@ class Companion {
   /** Subscribe to every push event from main. */
   private subscribe(): void {
     // A new reaction: talk (tinted by mood), show the bubble, optionally voice.
-    window.rocky.onReply((reply: RockyReply) => this.handleReply(reply));
+    window.rocky.onReply((reply: RockyReply) => this.events.enqueue(reply));
 
     // A capture happened: a brief glow flash so it is never invisible.
     window.rocky.onCaptureIndicator(() => this.active.flash(0.55));
@@ -1073,7 +1085,7 @@ class Companion {
 
     // Push-to-talk: main drives the recorder lifecycle; the audio itself never
     // leaves this renderer except as the in-memory WAV handed back to main.
-    window.rocky.onPtt((cmd) => void this.handlePtt(cmd.phase));
+    window.rocky.onPtt((cmd) => void this.handlePtt(cmd));
 
     // A newer release exists: Rocky offers it with Fetch / Later buttons.
     window.rocky.onUpdateAvailable((update) => {
@@ -1089,34 +1101,65 @@ class Companion {
   }
 
   /** Drive the push-to-talk recorder on main's command. */
-  private async handlePtt(phase: 'start' | 'stop' | 'cancel'): Promise<void> {
-    if (phase === 'start') {
+  private async handlePtt(cmd: { phase: 'start' | 'stop' | 'cancel'; sessionId: number }): Promise<void> {
+    const sessionId = cmd.sessionId;
+    if (!Number.isInteger(sessionId) || sessionId <= 0) return;
+
+    if (cmd.phase === 'start') {
+      if (this.pttSessionId !== null && this.pttSessionId !== sessionId) {
+        this.recorder.cancel();
+      }
+      this.pttSessionId = sessionId;
+      const start = this.recorder.start();
+      this.pttStartPromise = start;
       try {
-        await this.recorder.start();
-        // Hold the listening posture while the mic is live.
+        await start;
+        // A cancel or a newer session may have arrived while getUserMedia was
+        // pending. Never leave a late microphone stream alive.
+        if (this.pttSessionId !== sessionId) {
+          this.recorder.cancel();
+          return;
+        }
         this.currentGesture = 'listen';
         this.active.setGesture(this.currentGesture);
         this.active.setMode('curious');
       } catch {
-        // Mic denied/unavailable at the OS level — tell main to reset.
-        window.rocky.cancelVoiceNote('mic-failed');
+        if (this.pttSessionId === sessionId) {
+          this.pttSessionId = null;
+          window.rocky.cancelVoiceNote('mic-failed', sessionId);
+        }
+      } finally {
+        if (this.pttStartPromise === start) this.pttStartPromise = null;
       }
       return;
     }
-    if (phase === 'cancel') {
+
+    if (this.pttSessionId !== sessionId) return;
+
+    if (cmd.phase === 'cancel') {
+      this.pttSessionId = null;
       this.recorder.cancel();
       return;
     }
-    // stop → hand the audio to main (transcribe + save happen there).
+
+    // Stop can arrive before getUserMedia resolves. Wait for the same start
+    // operation instead of racing it and reporting a false empty recording.
     try {
+      await this.pttStartPromise;
+      if (this.pttSessionId !== sessionId) return;
       const wav = await this.recorder.stop();
+      if (this.pttSessionId !== sessionId) return;
       if (!wav) {
-        window.rocky.cancelVoiceNote('no-audio');
+        this.pttSessionId = null;
+        window.rocky.cancelVoiceNote('no-audio', sessionId);
         return;
       }
-      await window.rocky.submitVoiceNote(wav);
+      await window.rocky.submitVoiceNote(wav, sessionId);
     } catch {
-      window.rocky.cancelVoiceNote('capture-failed');
+      if (this.pttSessionId === sessionId) {
+        this.pttSessionId = null;
+        window.rocky.cancelVoiceNote('capture-failed', sessionId);
+      }
     }
   }
 
@@ -1152,67 +1195,57 @@ class Companion {
     return {};
   }
 
-  /** Handle an incoming reply: animate, show the bubble, and voice the line. */
-  private async handleReply(reply: RockyReply): Promise<void> {
-    // Remember where to settle once the bubble goes away.
+  /** Paint the newest reply immediately; audio is coordinated separately. */
+  private presentReply(reply: RockyReply): void {
     this.pendingRestMode = moodToRestingMode(reply.mood);
     this.currentGesture = reply.gesture;
     this.active.setGesture(this.currentGesture);
     this.active.setMode('talk');
-
-    // Show the locally generated translation (plus any quick-action buttons).
     const extras = this.bubbleExtras(reply);
     this.bubble.show(reply.line, reply.activity, extras.actions, extras.delayMs);
+  }
 
-    if (this.muted) return;
+  /** Cancel all voice implementations before a newer event takes ownership. */
+  private cancelAudio(): void {
+    this.tone.stop();
+    this.spoken.stop();
+    this.system.stop();
+    this.active.scheduleGlowPulses([]);
+  }
+
+  /** Speak one coordinated reply, abandoning every late async continuation. */
+  private async speakReply(reply: RockyReply, isCurrent: () => boolean): Promise<void> {
+    if (this.muted || this.paused || !isCurrent()) return;
 
     if (this.voiceMode === 'openai') {
-      // Spoken voice. Rocky "speaks in music", so optionally keep a soft
-      // procedural phrase underneath as his real language; the TTS is the
-      // translated words on top.
-      if (this.musicUnderlay) this.playTone(reply.motif, 0.22);
-
+      if (this.musicUnderlay && isCurrent()) this.playTone(reply.motif, 0.22);
       const segments = await window.rocky.speakLine(reply.line).catch(() => null);
-      if (segments && segments.length && !this.muted) {
-        const duration = await this.spoken
-          .playSequence(segments, this.voicePitch)
-          .catch(() => 0);
-        // Pulse the seam glow across the spoken line so Rocky "speaks" visibly.
-        this.active.scheduleGlowPulses(glowPulsesForDuration(duration));
-      } else if (!this.muted) {
-        // No key / no consent / synthesis failed — fall back to the full
-        // procedural tone so Rocky still says something audible. The soft
-        // underlay (if any) has short scheduled chords, so replaying at full
-        // volume just reasserts the phrase rather than doubling it.
+      if (!isCurrent() || this.muted || this.paused) return;
+      if (segments && segments.length) {
+        const duration = await this.spoken.playSequence(segments, this.voicePitch).catch(() => 0);
+        if (isCurrent()) this.active.scheduleGlowPulses(glowPulsesForDuration(duration));
+      } else if (isCurrent()) {
         this.playTone(reply.motif, 1);
       }
-    } else if (this.voiceMode === 'offline') {
-      // Offline spoken voice: no key, fully on-device. Optional soft chords
-      // underneath as Rocky's real language.
-      if (this.musicUnderlay) this.playTone(reply.motif, 0.22);
-
-      // Prefer the bundled neural voice (main/Kokoro): it returns WAV segments
-      // that play through the shared spoken path with accurate glow timing.
-      const segments = await window.rocky.speakLineOffline(reply.line).catch(() => null);
-      if (segments && segments.length && !this.muted) {
-        const duration = await this.spoken.playSequence(segments, this.voicePitch).catch(() => 0);
-        this.active.scheduleGlowPulses(glowPulsesForDuration(duration));
-      } else if (!this.muted) {
-        // Neural voice not bundled on this platform — fall back to the
-        // OS speech engine. It reports no duration up front, so glow on an
-        // estimate rather than awaiting the utterance.
-        this.active.scheduleGlowPulses(
-          glowPulsesForDuration(this.system.estimateDuration(reply.line)),
-        );
-        const ok = await this.system.speak(reply.line, this.voicePitch).catch(() => false);
-        // Nothing spoke and no underlay already played — full tone so Rocky is
-        // never silent.
-        if (!ok && !this.musicUnderlay && !this.muted) this.playTone(reply.motif, 1);
-      }
-    } else {
-      // Procedural Eridian chords; glow pulses align to their onsets.
-      this.playTone(reply.motif, 1);
+      return;
     }
+
+    if (this.voiceMode === 'offline') {
+      if (this.musicUnderlay && isCurrent()) this.playTone(reply.motif, 0.22);
+      const segments = await window.rocky.speakLineOffline(reply.line).catch(() => null);
+      if (!isCurrent() || this.muted || this.paused) return;
+      if (segments && segments.length) {
+        const duration = await this.spoken.playSequence(segments, this.voicePitch).catch(() => 0);
+        if (isCurrent()) this.active.scheduleGlowPulses(glowPulsesForDuration(duration));
+      } else {
+        this.active.scheduleGlowPulses(glowPulsesForDuration(this.system.estimateDuration(reply.line)));
+        const ok = await this.system.speak(reply.line, this.voicePitch).catch(() => false);
+        if (isCurrent() && !ok && !this.musicUnderlay) this.playTone(reply.motif, 1);
+      }
+      return;
+    }
+
+    if (isCurrent()) this.playTone(reply.motif, 1);
   }
 
   /** Play the procedural tone at `volume` and align glow pulses to its onsets. */

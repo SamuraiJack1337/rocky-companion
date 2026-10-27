@@ -13,7 +13,14 @@
 //   - On Save, build a Settings patch and persist it — but GUARD the switch to
 //     cloud so it requires both consent and a stored key.
 
-import type { MicPermissionStatus, Settings, ScreenPermissionStatus, SkinInfo } from '../shared/types';
+import type {
+  MicPermissionStatus,
+  Settings,
+  ScreenPermissionStatus,
+  SkinInfo,
+  PrivacySummary,
+  ProviderHealth,
+} from '../shared/types';
 import {
   clampInterval,
   INTERVAL_MIN,
@@ -162,6 +169,10 @@ const screenHint = el<HTMLDivElement>('screen-hint');
 const saveBtn = el<HTMLButtonElement>('save-btn');
 const closeBtn = el<HTMLButtonElement>('close-btn');
 const saveStatus = el<HTMLDivElement>('save-status');
+const privacySummaryNode = el<HTMLDivElement>('privacy-summary');
+const providerHealthNode = el<HTMLDivElement>('provider-health');
+const refreshDiagnosticsBtn = el<HTMLButtonElement>('refresh-diagnostics');
+const eraseUserContentBtn = el<HTMLButtonElement>('erase-user-content');
 
 // ── Local UI state ───────────────────────────────────────────────────────────
 
@@ -845,6 +856,65 @@ function applyPlatformHints(): void {
   }
 }
 
+async function refreshPrivacyDiagnostics(): Promise<void> {
+  refreshDiagnosticsBtn.disabled = true;
+  setStatus(privacySummaryNode, 'Checking routes and storage…', 'muted');
+  setStatus(providerHealthNode, 'Checking providers…', 'muted');
+  try {
+    const [privacy, health] = await Promise.all([
+      window.rocky.getPrivacySummary(),
+      window.rocky.getProviderHealth(),
+    ]);
+    paintPrivacySummary(privacy);
+    paintProviderHealth(health);
+  } catch {
+    setStatus(privacySummaryNode, 'Privacy summary unavailable.', 'err');
+    setStatus(providerHealthNode, 'Provider diagnostics unavailable.', 'err');
+  } finally {
+    refreshDiagnosticsBtn.disabled = false;
+  }
+}
+
+function paintPrivacySummary(summary: PrivacySummary): void {
+  privacySummaryNode.className = 'status muted';
+  privacySummaryNode.textContent = [
+    `Vision: ${summary.routes.vision}`,
+    `Speech-to-text: ${summary.routes.speechToText}`,
+    `Notes/chat: ${summary.routes.notesAndChat}`,
+    `Voice: ${summary.routes.voice}`,
+    `Web: ${summary.routes.web}`,
+    `Stored: ${summary.stored.notes} notes, ${summary.stored.chatMessages} chat messages, ${summary.stored.decisions} decisions, ${summary.stored.tasks} tasks, ${summary.stored.researchArtifacts} research reports, ${Math.max(0, summary.stored.workspaces - 1)} custom projects`,
+    `Folder: ${summary.dataDirectory}`,
+  ].join('\n');
+  privacySummaryNode.style.whiteSpace = 'pre-wrap';
+}
+
+function paintProviderHealth(health: ProviderHealth): void {
+  const entries = Object.entries(health) as Array<[string, ProviderHealth[keyof ProviderHealth]]>;
+  providerHealthNode.className = 'status muted';
+  providerHealthNode.textContent = entries
+    .map(([name, item]) => `${name}: ${item.state} — ${item.label}. ${item.detail}`)
+    .join('\n');
+  providerHealthNode.style.whiteSpace = 'pre-wrap';
+}
+
+refreshDiagnosticsBtn.addEventListener('click', () => void refreshPrivacyDiagnostics());
+eraseUserContentBtn.addEventListener('click', () => {
+  if (!window.confirm('Erase all local notes, chat history, decisions, tasks, and research reports? This cannot be undone.')) return;
+  void (async () => {
+    eraseUserContentBtn.disabled = true;
+    try {
+      const summary = await window.rocky.eraseUserContent();
+      paintPrivacySummary(summary);
+      setStatus(saveStatus, 'Local user-authored content erased.', 'ok');
+    } catch {
+      setStatus(saveStatus, 'Could not erase local content.', 'err');
+    } finally {
+      eraseUserContentBtn.disabled = false;
+    }
+  })();
+});
+
 async function init(): Promise<void> {
   applyPlatformHints();
 
@@ -867,7 +937,12 @@ async function init(): Promise<void> {
   });
 
   // Independent async probes.
-  await Promise.all([refreshKeyStored(), refreshScreenPermission(), refreshMicPermission()]);
+  await Promise.all([
+    refreshKeyStored(),
+    refreshScreenPermission(),
+    refreshMicPermission(),
+    refreshPrivacyDiagnostics(),
+  ]);
 
   // Reflect the clamp range into the inputs (belt-and-suspenders vs. HTML attrs).
   intervalRange.min = String(INTERVAL_MIN);

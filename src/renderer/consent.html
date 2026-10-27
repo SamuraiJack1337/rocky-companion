@@ -404,8 +404,10 @@
               mention what's on screen. Prefer he only knows your activity at a
               <strong>high level</strong> (coding, writing, taking a break)? Switch to
               <strong>Classic remarks</strong> in Settings and he never reads specific text.</li>
-            <li>Either way, screens that look private (logins, banking, messages,
-              personal documents) never get a specific remark.</li>
+            <li>Screens classified as private (logins, banking, messages,
+              personal documents) have their specific remark suppressed. This
+              classification is model-based; choose <strong>Classic remarks</strong>
+              for the strictest enum-only dialogue boundary.</li>
             <li><strong>No images are ever saved.</strong> Each screenshot lives in
               memory for a moment, then is gone.</li>
             <li>You can pause Rocky or quit at any time from the menu bar.</li>
@@ -442,7 +444,7 @@
                   <span class="badge private">private — stays on your device</span>
                 </span>
                 <span class="desc">
-                  Uses a local model via Ollama. Screenshots never leave your Mac.
+                  Uses a local model via Ollama. Screenshots never leave your device.
                   Recommended.
                 </span>
               </span>
@@ -495,8 +497,8 @@
               With cloud, each screenshot is sent to OpenAI under
               <strong>your own API key</strong> for analysis. The on-device option
               keeps screenshots local; cloud does not. Your key is validated, then
-              stored encrypted in your Mac's keychain — it is never written to a
-              file or logged.
+              stored encrypted through Electron's operating-system protected
+              credential storage — it is never written in plain text or logged.
             </p>
 
             <label class="check" for="cloud-optin" style="margin-top: 12px">

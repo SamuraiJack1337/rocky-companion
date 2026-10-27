@@ -19,6 +19,7 @@
 // passed in; nothing touches the network.
 
 import { spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { app } from 'electron';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -32,6 +33,15 @@ const BASE_LENGTH_SCALE = 1.0;
 export const DEFAULT_SPEAKER = 6;
 /** Hard cap so a wedged process can never hang the voice. */
 const SYNTH_TIMEOUT_MS = 15_000;
+const activeKokoroChildren = new Set<ChildProcess>();
+
+/** Terminate every local synthesis process during app shutdown. */
+export function cancelOfflineTts(): void {
+  for (const child of activeKokoroChildren) {
+    try { child.kill('SIGKILL'); } catch { /* already exited */ }
+  }
+  activeKokoroChildren.clear();
+}
 
 /** sherpa-onnx + Kokoro assets: CLI, model, speaker bank, phonemizer data. */
 export interface KokoroResources {
@@ -160,7 +170,7 @@ export function synthesizeWithKokoro(
     const lengthScale = opts.lengthScale ?? BASE_LENGTH_SCALE;
     const outPath = path.join(os.tmpdir(), `rocky-tts-${process.pid}-${Date.now()}.wav`);
 
-    let child;
+    let child: ChildProcess;
     try {
       child = spawn(
         res.exe,
@@ -181,10 +191,12 @@ export function synthesizeWithKokoro(
       return resolve(null);
     }
 
+    activeKokoroChildren.add(child);
     let settled = false;
     const done = (value: Buffer | null) => {
       if (settled) return;
       settled = true;
+      activeKokoroChildren.delete(child);
       clearTimeout(timer);
       try {
         child.kill('SIGKILL');
